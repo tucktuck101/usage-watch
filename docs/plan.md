@@ -59,8 +59,8 @@ Each phase depends on the ones before it unless a row says otherwise.
 
 | # | Task | Done when | Status |
 |---|---|---|---|
-| 0.1 | Endpoint check: Claude and Codex usage APIs, read-only, printing no tokens | Response shapes are recorded under `docs/research/`, or the endpoints are ruled out | blocked: needs the owner to run it or grant permission |
-| 0.2 | Decide what happens to `openusage`: optional backend, or removed | Decision recorded below | open, after 0.1 |
+| 0.1 | Endpoint check: Claude and Codex usage APIs, read-only, printing no tokens | Response shapes are recorded under `docs/research/`, or the endpoints are ruled out | done: [finding](research/0.1-endpoint-check.md). Personal Claude and Codex answer directly; the team-plan token was throttled (429) |
+| 0.2 | Decide what happens to `openusage`: optional backend, or removed | Decision recorded below | open: 0.1 suggests optional, not removed, until the team-plan path works |
 | 0.3 | Swap the old scratchpad watcher for the installed `usage-watch run` | One watcher running | owner action |
 | 0.4 | Record real Claude and Codex stall screens as fixtures | Those adapters no longer rely on made-up screens | waits for a real stall |
 
@@ -166,6 +166,6 @@ insufficient, given what it means for security and maintenance.
 
 ## Open questions
 
-- 0.1: how the endpoint check gets run (owner runs a probe script, or grants
-  permission).
+- Whether the team-plan token answers the usage endpoint when not
+  recently polled (see the 0.1 finding).
 - 0.2: whether `openusage` stays as an optional backend or goes.
