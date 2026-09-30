@@ -45,6 +45,12 @@ Quota recovery stays as one capability of the wider tool.
   only readings fresh enough to trust.
 - **Hooks add context, not counts.** They say why (task, PR, role, retries),
   never how many tokens.
+- **Extensible by the user, at the user's risk.** Support for an unknown
+  harness, multiplexer or source can be added without forking, from a local
+  extensions folder (`~/.config/usage-watch/extensions/`). Extensions are
+  **experimental and observe-only**: they show states and data, labelled
+  experimental, but never nudge a pane unless the user explicitly allows it
+  for that extension. Upstream support stays unaffected.
 - **Views build on what exists.** The dashboard and commands read normalised
   state. They don't talk to sources directly.
 - **No credentials of any kind.** usage-watch never reads a token, a key
@@ -177,6 +183,17 @@ Written under `docs/design/` and agreed before building.
 |---|---|
 | E1 | OTLP export to external backends, applying D4's metric rules and D5's privacy rules |
 
+### Phase 10: extension by agents
+
+Needs the adapter, collector and tap interfaces settled (D6, phase 3), so the
+brief never describes an interface about to change.
+
+| # | Task |
+|---|---|
+| X1 | `usage-watch extend [harness\|multiplexer\|source] [name]`: prints a self-contained brief an agent follows to add support in the user's own environment, marked experimental and the user's responsibility. Generated from the code so it can't drift. Contents: the guarantees not to break (the primer's agent section); the interface to implement; the evidence required first (recorded screens including a real stall, cited sources); the hard rules (no credentials, no prompt content, redaction, provenance, opt-in and reversible taps); the tests and the command that proves them; where files go and how to share upstream; a done checklist that `doctor` verifies |
+| X2 | The local extensions folder: load at startup, label as experimental in `status` and `doctor`, observe-only unless allowed per extension |
+| X3 | Discovery: when `doctor` or `status` meets something it can't handle (an agent-like process it doesn't recognise, no tmux), it says so and names the matching `extend` command |
+
 ### Deferred
 
 Traffic interception or proxying. Revisit only if every other source proves
@@ -194,6 +211,7 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Provider logic may be ported from OpenUsage (MIT) with its notice kept; its name and branding are not used |
 | 2026-09-30 | `openusage` is removed as a dependency, for maintainability, now rather than with C1. Until C1's readers land, usage-watch has no capacity source: it still finds and shows stalled panes, but they wait instead of being nudged |
 | 2026-09-30 | **usage-watch reads no credential of any kind** (owner decision, to stay within Anthropic's terms: R8, R9). See the principle. It also rules out an opt-in "direct read" mode |
+| 2026-10-01 | Users' agents can extend usage-watch through `usage-watch extend` and a local extensions folder. Extensions are experimental, the user's responsibility, and observe-only unless allowed (X1–X3) |
 | 2026-09-30 | Capacity is anchors plus estimates: real readings from the harnesses, with the usage stream filling the gaps between them (D1, V4) |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
