@@ -79,6 +79,13 @@ Each phase depends on the ones before it unless a row says otherwise.
 Read-only. Each question produces a file under `docs/research/` with its
 evidence. A question with no evidence stays open.
 
+**R1 to R8 answered 2026-09-30:** [R1](research/R1-native-otel.md),
+[R2](research/R2-local-token-records.md), [R3](research/R3-capacity-sources.md),
+[R4](research/R4-otel-genai-conventions.md), [R5](research/R5-pricing-sources.md),
+[R6](research/R6-joins.md), [R7](research/R7-logins-and-accounts.md),
+[R8](research/R8-omp-authentication.md). R8 found a terms-of-service
+constraint that changes C1 (see Open questions).
+
 | # | Question | Why |
 |---|---|---|
 | R1 | What native OTel does each harness emit (Claude Code, Codex, omp), and how is it switched on? Unverified for all three | Decides whether the top source exists |
@@ -89,6 +96,7 @@ evidence. A question with no evidence stays open.
 | R6 | How can a usage record be joined to a pane or project: session ID to process to pane, or cwd in logs? | The joins that are the product's value |
 | R7 | Where does each harness keep its logins, and how can a pane's account be told? Known leads: Claude's default home and `CLAUDE_CONFIG_DIR` homes (Keychain entry suffixed by a hash of the directory), Claude Swap's saved accounts, Claude Desktop's organizations (macOS only); Codex's `CODEX_HOME`, `~/.codex`, `~/.config/codex` and sibling `-*` homes; omp's `auth_credentials` (several logins per provider, each with an identity key). Open: which login an omp pane is using at a given moment | Several subscriptions per provider, attributed correctly |
 | R8 | How does omp authenticate its accounts, and would usage-watch holding its own logins (the way omp does) be easier or more reliable than discovering the harnesses' logins? | May replace discovery in D7 and C1 |
+| R9 | Does Claude Code expose its own plan limits locally, without a credential (status line input, a local cache, an OTel signal)? | Claude capacity without touching a Claude credential (R8) |
 
 ### Phase 2: design
 
@@ -118,7 +126,7 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Native capacity, read-only, for every account discovered (D7): Claude and Codex logins from every home, omp `usage_history`, polling within the budget. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7 |
+| C1 | Capacity for every account discovered (D7), from sources that need no Claude credential: omp's `usage_history` (or `omp usage --json`), Codex's `rate_limits` in its session files, on-screen reset hints, and whatever R9 finds. A live Codex read with its login only if the owner accepts the unclear policy. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
 | C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
 | C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
@@ -181,6 +189,16 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
 ## Open questions
+
+- **Decision required (R8):** adopt "usage-watch never reads, stores or
+  sends a Claude.ai credential or session token". Anthropic's terms forbid
+  developers from collecting or intermediating them, which rules out C1's
+  original plan of reading Claude Code's token for the usage endpoint.
+  Recommended: adopt it, and take Claude capacity only from credential-free
+  sources (C1 as revised).
+- **Decision required (R8):** whether to read Codex capacity live with
+  Codex CLI's login. OpenAI's position is unpublished. Recommended: no;
+  use the free `rate_limits` in Codex's session files.
 
 - Whether the team-plan token answers the usage endpoint when not
   recently polled (see the 0.1 finding).
