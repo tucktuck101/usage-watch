@@ -33,6 +33,16 @@ Quota recovery stays as one capability of the wider tool.
   files, then provider polling for account-level facts, then tmux, process
   and screen inspection for runtime state and enrichment. No single source
   is assumed complete; joining them up is the value.
+- **Accounts, not providers, are the unit.** One person often holds several
+  subscriptions per provider. Each account is identified by the provider's
+  own stable ID, stored hashed and shown by a label the user chooses. The
+  same account found in several places is one account with several token
+  sources.
+- **Polling is budgeted.** Every tool polling a token shares one
+  allowance. Prefer sources that cost no requests. Poll each account at most
+  every few minutes, with jitter. Back off on 429 and honour `Retry-After`.
+  Every capacity reading carries its age, and decisions such as a nudge use
+  only readings fresh enough to trust.
 - **Hooks add context, not counts.** They say why (task, PR, role, retries),
   never how many tokens.
 - **Views build on what exists.** The dashboard and commands read normalised
@@ -77,6 +87,7 @@ evidence. A question with no evidence stays open.
 | R4 | What is the current state of the OTel GenAI semantic conventions (stable or experimental attributes)? | Which names are safe to adopt |
 | R5 | Where does pricing data come from? OpenUsage references LiteLLM's public model-price table | Cost estimates |
 | R6 | How can a usage record be joined to a pane or project: session ID to process to pane, or cwd in logs? | The joins that are the product's value |
+| R7 | Where does each harness keep its logins, and how can a pane's account be told? Known leads: Claude's default home and `CLAUDE_CONFIG_DIR` homes (Keychain entry suffixed by a hash of the directory), Claude Swap's saved accounts, Claude Desktop's organizations (macOS only); Codex's `CODEX_HOME`, `~/.codex`, `~/.config/codex` and sibling `-*` homes; omp's `auth_credentials` (several logins per provider, each with an identity key). Open: which login an omp pane is using at a given moment | Several subscriptions per provider, attributed correctly |
 
 ### Phase 2: design
 
@@ -90,12 +101,13 @@ Written under `docs/design/` and agreed before building.
 | D4 | Attribute names: standard GenAI versus `usage_watch.*`; which fields may go on metrics versus traces and events | R4 |
 | D5 | Privacy: no prompts, emails and account IDs hashed or dropped, redaction, what export may send | D1 |
 | D6 | Collector interface: poll or push, deduplication, a watermark per source, handling disagreement | D1, D3 |
+| D7 | Account registry and identity: the stable identity per provider, hashing, user labels, removed accounts, several token sources per account, confirming a token's identity whenever it changes, choosing between valid tokens, the poll budget per account | R7, D5 |
 
 ### Phase 3: foundation
 
 | # | Task |
 |---|---|
-| F1 | The store, and the model types from D1 and D3 |
+| F1 | The store, the model types from D1 and D3, and the account registry from D7 |
 | F2 | The collector runtime: scheduling, watermarks, deduplication, writing records |
 | F3 | Existing logic becomes collectors: screen states (inferred), `openusage` (observed), tmux, git and workmux enrichment |
 | F4 | `status` and `dashboard` read from the store |
@@ -105,10 +117,11 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Native capacity, read-only: Claude login, Codex login, omp `usage_history` | 0.1, 0.2 |
+| C1 | Native capacity, read-only, for every account discovered (D7): Claude and Codex logins from every home, omp `usage_history`, polling within the budget | 0.1, 0.2, D7 |
 | C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
 | C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
+| C5 | Pane-to-account attribution: read only `CLAUDE_CONFIG_DIR` or `CODEX_HOME` from the harness process's environment, never other variables; for omp, per R7; config as the fallback | R7, D7 |
 
 ### Phase 5: views
 
@@ -163,6 +176,7 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Goal is every view listed; the proof of concept is the set in Scope |
 | 2026-09-30 | Credentials are read-only: never refreshed or written |
 | 2026-09-30 | Provider logic may be ported from OpenUsage (MIT) with its notice kept; its name and branding are not used |
+| 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
 ## Open questions
 
