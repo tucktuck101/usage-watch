@@ -145,8 +145,8 @@ F1 or F2.
 
 | # | Task |
 |---|---|
-| F1 | The store, the model types from D1 and D3, and the account registry from D7 |
-| F2 | The collector runtime: scheduling, watermarks, deduplication, writing records |
+| F1 | The store, the model types from D1 and D3, and the account registry from D7. **Done 2026-10-01** (`model.py`, `store/`, `identity.py`) |
+| F2 | The collector runtime: scheduling, watermarks, deduplication, writing records. **Done 2026-10-01** (`runtime/`: core, liveness, reconcile, attribution, accounts). Not yet wired into commands (F3–F5); the per-source field allowlist check arrives with each collector (phase 4) |
 | F3 | Existing logic becomes collectors: screen states (inferred), tmux, git and workmux enrichment |
 | F4 | `status` and `dashboard` read from the store |
 | F5 | The watcher reads its nudge decisions from the store, and its behaviour conforms to D8, confirmed by tests of D8's conditions |
