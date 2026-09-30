@@ -1,0 +1,22 @@
+[project]
+name = "usage-watch"
+version = "0.1.0"
+description = "Find AI coding agents stalled on a usage limit in tmux, and nudge them when the pool refills."
+readme = "README.md"
+license = "0BSD"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+usage-watch = "usage_watch.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

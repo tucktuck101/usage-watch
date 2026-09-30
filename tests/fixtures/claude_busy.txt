@@ -1,0 +1,10 @@
+⏺ Bash(tmux capture-pane -p -J -t %1)
+  ⎿  (output)
+
+✳ Bloviating… (55s · ↓ 2.6k tokens)
+
+────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────
+  Opus 5.5 ~/demo-project (main) c…
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

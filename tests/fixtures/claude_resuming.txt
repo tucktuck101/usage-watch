@@ -1,0 +1,8 @@
+⏺ Writing the adapter tests now.
+
+  ⎿  Usage limit reached · continuing automatically at 3pm · esc to cancel
+
+────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────
+  Opus 5.5 ~/demo-project (main)

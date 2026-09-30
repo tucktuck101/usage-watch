@@ -1,0 +1,8 @@
+⏺ Writing the adapter tests now.
+
+  ⎿  Context limit reached · /compact or /clear to continue
+
+────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────
+  Opus 5.5 ~/demo-project (main)

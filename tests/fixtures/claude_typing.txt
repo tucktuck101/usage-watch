@@ -1,0 +1,7 @@
+⏺ Done. The tests pass.
+
+────────────────────────────────────────────────────────────────
+❯ i got an idea about the watcher
+────────────────────────────────────────────────────────────────
+  Opus 5.5 ~/demo-project (main)
+  ⏵⏵ auto mode on (shift+tab to cycle)

@@ -1,0 +1,4 @@
+  ● Read src/app/routing.py:185-197
+  ⎋ Re-read current _finish tail before editing annotate_turn call
+╭── ⠙ 23m > ◒ Sonnet 5 > 🌳 demo-project > ⑂ lane-t45 ?1 > S4.20 ▶────────────────────────────────────────24%────────────────────────────────────────╎──┃
+╰─

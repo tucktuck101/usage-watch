@@ -1,0 +1,11 @@
+⏺ When the pool runs out the pane shows "Usage limit reached" and waits.
+  The watcher looks for that notice directly above the input box.
+  It ignores transcript text further up, like this line.
+  Nothing else to report.
+  Done.
+  Anything else?
+
+────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────
+  Opus 5.5 ~/demo-project (main)
