@@ -19,7 +19,8 @@ Quota recovery stays as one capability of the wider tool.
   reasoning tokens. *Cost* is money, actual or estimated.
 - **Every fact carries its provenance:** the source it came from, and a
   confidence of `authoritative` (the harness or provider said so),
-  `observed` (read from a tool such as OpenUsage) or `inferred` (deduced,
+  `observed` (read from a copy another tool kept, such as omp's usage
+  cache) or `inferred` (deduced,
   such as a state read from a screen). When sources disagree, the record
   shows it.
 - **usage-watch's own model is the core.** OpenTelemetry is the exchange
@@ -29,10 +30,14 @@ Quota recovery stays as one capability of the wider tool.
   `usage_watch.*`.
 - **Cardinality.** Session, pane, task and commit identifiers go on traces
   and events, never on metrics.
-- **Source order.** Native OTel first, then structured logs and session
-  files, then provider polling for account-level facts, then tmux, process
-  and screen inspection for runtime state and enrichment. No single source
-  is assumed complete; joining them up is the value.
+- **Source order.** For **counting** usage, each harness's session log is
+  the primary source; native OTel is secondary for counting, and counts
+  only where it links to a session-log request. For **other telemetry**
+  (identity, billing route, cost), native OTel is a preferred source,
+  alongside structured logs and session files. Then provider polling for
+  account-level facts, then tmux, process and screen inspection for
+  runtime state and enrichment. No single source is assumed complete;
+  joining them up is the value.
 - **Accounts, not providers, are the unit.** One person often holds several
   subscriptions per provider. Each account is identified by the provider's
   own stable ID, stored hashed and shown by a label the user chooses. The
@@ -118,14 +123,15 @@ harnesses' OTel.
 
 Written under `docs/design/` and agreed before building.
 
-**D1 to D8 drafted and revised after an external review, 2026-10-01:** see
-[the design index](design/README.md). Each document marks what must be
+**D1 to D8 drafted and revised after two external reviews, 2026-10-01:**
+see [the design index](design/README.md). Each document marks what must be
 settled before the foundation build ([F]), what is only an extension point
-([X]), and what is later ([L]).
+([X]), and what is later ([L]). D8 is [F5]: settled before F5, not before
+F1 or F2.
 
 | # | Task | Needs |
 |---|---|---|
-| D1 | Canonical model: capacity samples, usage events, cost events, agent-state samples and context events, each with source and confidence. Capacity samples are either **anchors** (a real reading from a harness: `authoritative` or `observed`) or **estimates** (interpolated from the usage stream, `estimated`), never mixed. One counting rule for cached tokens across sources | R1–R3 |
+| D1 | Canonical model: capacity samples, usage events, cost events, agent-state samples and context events, each with source and confidence. Capacity samples are **anchors** only (a real reading from a harness: `authoritative` or `observed`); **estimates** (interpolated from the usage stream) are computed at query time, never stored, never mixed. One counting rule for cached tokens across sources | R1–R3 |
 | D2 | Correlation keys and join rules, including what a failed join looks like | R6 |
 | D3 | Storage: SQLite (standard library), schema versioning, retention, "last looked" markers | D1 |
 | D4 | Attribute names: standard GenAI versus `usage_watch.*`; which fields may go on metrics versus traces and events | R4 |
@@ -140,17 +146,17 @@ settled before the foundation build ([F]), what is only an extension point
 |---|---|
 | F1 | The store, the model types from D1 and D3, and the account registry from D7 |
 | F2 | The collector runtime: scheduling, watermarks, deduplication, writing records |
-| F3 | Existing logic becomes collectors: screen states (inferred), `openusage` (observed), tmux, git and workmux enrichment |
+| F3 | Existing logic becomes collectors: screen states (inferred), tmux, git and workmux enrichment |
 | F4 | `status` and `dashboard` read from the store |
-| F5 | The watcher reads its nudge decisions from the store, with behaviour unchanged, which the existing tests confirm |
+| F5 | The watcher reads its nudge decisions from the store, and its behaviour conforms to D8, confirmed by tests of D8's conditions |
 
 ### Phase 4: collectors
 
 | # | Task | Needs |
 |---|---|---|
 | C1 | Capacity for every account discovered (D7), reading no credential of any kind (R9): a Claude **status line tap** (opt-in, reversible wrap of the user's `statusLine` command that records `rate_limits`); Claude Code's `cachedUsageUtilization`, honouring its age; transcript limit hit and reset events; omp's `usage_cache` entries for accounts omp holds (R10, about a minute fresh; `usage_history` as the hourly fallback); Codex's `rate_limits` from its session files; on-screen reset hints. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
-| C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
-| C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
+| C2 | Token usage from session logs (Claude, Codex, omp), with backfill. The session log is each harness's **primary counting source** | R2 |
+| C3 | Local OTLP receiver on 127.0.0.1 (D6): OTLP/HTTP with JSON (standard library) and protobuf (the optional extra `usage-watch[otlp]`). Native OTel is a preferred telemetry source but **secondary for counting**: its observations count only when linked to a primary session-log one | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
 | C5 | Pane-to-account attribution: read only `CLAUDE_CONFIG_DIR` or `CODEX_HOME` from the harness process's environment, never other variables; for omp, per R7; config as the fallback | R7, D7 |
 
@@ -168,7 +174,7 @@ settled before the foundation build ([F]), what is only an extension point
 | # | Task |
 |---|---|
 | K1 | A pricing table with a refresh and a pinned version |
-| K2 | Cost records labelled `actual` (billed API spend) or `estimated` (tokens times price), never mixed silently |
+| K2 | Cost records with a basis (`actual_billed`, `harness_estimate` or `list_price`) and the request's billing route (`api_key`, `subscription` or `unknown`). Bases never mix, and only `actual_billed` is called spend (D1) |
 
 ### Phase 7: alerts
 
@@ -223,15 +229,17 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | **usage-watch reads no credential of any kind** (owner decision, to stay within Anthropic's terms: R8, R9). See the principle. It also rules out an opt-in "direct read" mode |
 | 2026-10-01 | Design review adopted (all 20 points; refinements on #2, #6, #9). Key outcomes: per-dimension attributions with validity classes; source observations reconciled into canonical usage events, disagreement kept; explicit token field names with a derived total input; auxiliary calls inside totals; three kinds of capacity evidence (anchor, recovery signal, estimate), estimates computed at query time and never used for nudges; per-source freshness for display and control; collector runtime separate from nudging and views; cost bases plus billing route, only `actual_billed` called spend; allowlists for ingestion and export; developer context export opt-in; `checkout_id` versus `repository_id`; reversible account aliases; no moving top-N on metrics; "last looked" with opened, last-seen and closed times; invariants as tests; nudge conditions in D8 |
 | 2026-10-01 | Only one usage source per harness counts as primary (the session log) until a shared request ID links it to another, so unlinkable sources can't double count |
+| 2026-10-01 | Second design review adopted. Key outcomes: one write owner per table (collector runtime for data tables, nudge policy for `nudges`, each view for its `looks` row); collector liveness from the `run.lock` lock plus a heartbeat row; `session_key` (`<harness>:<session_id>`) as the only session reference; observation identity `(source, stream_key, source_request_key)`; `event_observations` links with `accounting`, `supporting` and `metadata` roles; primary, secondary and unlinked counting (session logs primary; unlinked secondary observations never count); attribution evidence kept apart from one effective attribution per subject and dimension (`attributed`, `ambiguous` or `unattributed`); null arithmetic (unknown never becomes 0; sums report how many records had unknowns); `checkout_id` and `repository_id` keyed per install; account merges only on verified equivalence; D8 thresholds as named parameters (`min_remaining_pct`, `stale_window_max_age`, `stale_window_min_remaining_pct`), with D8 settled before F5 |
 | 2026-10-01 | Users' agents can extend usage-watch through `usage-watch extend` and a local extensions folder. Extensions are experimental, the user's responsibility, and observe-only unless allowed (X1–X3) |
 | 2026-09-30 | Capacity is anchors plus estimates: real readings from the harnesses, with the usage stream filling the gaps between them (D1, V4) |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
+| 2026-10-01 | Integration resolutions for the second review: confidence order `authoritative` > `observed` > `inferred`; subject's time per subject kind; `disagreement` across all supporting observations; `stream_key` fixed at first store (trace-ID hash for OTLP without a session); `stream_key` and surrogate IDs for capacity samples and limit events, no key includes `account`; Codex `billing_route` as session-level attribution evidence from OTel `auth_mode`; observation keys (Codex rollout timestamp + `total_tokens`, omp entry `id` confirmed before C2, Codex OTLP `turn.id`, omp OTLP `gen_ai.response.id`); `event_observations.field` NOT NULL; `link_state`; effective attributions stored only for subjects with own evidence; identical `wait` = `(pane, error_key, reason code)`; `runtime` keeps 20 past runs; older schema means wait; `live` evidence bounds; D2 coherence rules; `verified_by` on `co_reported` merges; config fallback as `config`/`inferred` evidence; omp usage-cache account evidence `observed`; 8-day look-back for applicable windows; `weekly:<model>` matching by family word; hash namespaces; screen-adapter outputs from code; limit-event and history `stream_key`/`source_key` rules; the config fallback is `live` evidence; failed-join notes live on `effective_attributions` |
 
 ## Open questions
 
-- **Billing route per request** for Claude and omp: nothing seen so far
-  marks whether a request used a subscription or an API key (Codex OTel has
-  `auth_mode`). Until found, those costs are `billing route unknown` and
+- **Billing route** for Claude and omp: nothing seen so far marks whether
+  a session used a subscription or an API key (Codex OTel's `auth_mode`
+  gives session-level evidence, D2). Until found, those costs are `billing route unknown` and
   never shown as spend (D1).
 - **Token semantics to verify per source before trusting a mapping** (D4):
   whether omp's OTel `input` includes cache reads, whether Codex's

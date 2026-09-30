@@ -6,7 +6,7 @@ cites the research it rests on.
 
 | Doc | Decides |
 |---|---|
-| [D1: model](D1-model.md) | Records, token fields, the three kinds of capacity evidence, cost bases, attributions, **invariants** |
+| [D1: model](D1-model.md) | Records, token fields, the three kinds of capacity evidence, cost bases, attribution evidence and effective attribution, **invariants** |
 | [D2: joins](D2-joins.md) | How records are attributed to sessions, checkouts, repositories, branches, panes and accounts; live versus historical validity |
 | [D3: storage and runtime](D3-storage.md) | The database, the four separate runtime parts, retention, "last looked" |
 | [D4: naming](D4-naming.md) | The per-source field mapping, export names, cardinality |
@@ -20,13 +20,15 @@ cites the research it rests on.
 - **[X]** needs only an extension point now;
 - **[L]** belongs to a later phase and is sketched only.
 
+D8 is **[F5]**: settled before F5, not before F1 or F2.
+
 **The shape, from source to view:**
 
 ```
 session logs ─┐                                        ┌─ status / dashboard / usage
 OTel (OTLP) ──┤ pull and push     write path:          │
 limit data ───┼─> sources ──> allowlist ─> observations ─> reconcile ─> events ─> store ─┼─ nudge policy (D8)
-tmux, git, ───┘    (D6)         (D5)                    (D6)      + attributions (D2)    └─ export (later)
+tmux, git, ───┘    (D6)         (D5)                    (D6)      + attribution (D2)     └─ export (later)
 workmux
 ```
 
