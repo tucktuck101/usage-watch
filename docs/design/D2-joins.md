@@ -1,63 +1,103 @@
-# D2: Joins
+# D2: Joins and attribution
 
-Status: draft. Rests on [R6](../research/R6-joins.md),
-[R7](../research/R7-logins-and-accounts.md) and
+Status: draft, revised after review (2026-10-01). Rests on
+[R6](../research/R6-joins.md), [R7](../research/R7-logins-and-accounts.md),
 [R1's live capture](../research/R1-native-otel.md#live-capture-2026-10-01).
+Scope markers as in [D1](D1-model.md).
 
-The value of usage-watch is joining facts that no single source holds.
-Each join below states its method, the confidence it yields, and what
-happens when it fails.
+Every join produces an **attribution** (D1): a value, the method, a
+confidence, and a validity class.
 
-## Usage to session
+## Validity classes [F]
 
-Every usage source names its session: Claude's `sessionId`, Codex's
-`session_meta.payload.id` / OTel `conversation.id`, and omp's session header
-`id` / `gen_ai.conversation.id`. **Authoritative.** A usage record with no
-session ID is stored with `session_id = null` and counted, not dropped.
+| Class | Meaning | May be applied to |
+|---|---|---|
+| `historical` | From the record itself, true whenever it's read | any record, including backfill |
+| `live` | From the machine's current state | only sessions that are **live**: seen in a running harness process during this collection pass |
+| `time_bounded` | From current state, but valid only within a known window, e.g. "the login at this home now", valid only if the session started after the login last changed | live sessions, and only while the bound can be checked |
 
-## Session to project and branch
+**A backfilled record never inherits present-day context.** Backfill gets
+`historical` attributions only. Everything else is left null, with the
+reason noted.
 
-- **Project:** from `cwd`, through the same git logic as today's topology
-  scan (main checkout, or worktree). **Authoritative** for the cwd, and
-  **inferred** for the project name.
-- **Branch:** from the record where it's there (Claude `gitBranch`, Codex
-  `git.branch`), **authoritative**. For omp, from git at ingest time,
-  **inferred**: a worktree may have switched branch since.
+## Project identity [F]
 
-## Session to pane (live only)
+Three separate things:
 
-Tried in this order, stopping at the first that works:
+| | Derived from | Stable across | Notes |
+|---|---|---|---|
+| `checkout_id` | a keyed hash (D5) of the real path of the git **common directory** | worktrees of one clone | **Changes if the repository is moved or cloned again**, which starts a new checkout. Non-git directories get a hash of their real path, marked `non_repo` |
+| `repository_id` | a keyed hash of the normalised `origin` remote (host and path, lowercased, without scheme, credentials or `.git`) | moves, re-clones, other machines' checkouts of the same remote | null when there's no remote. Two checkouts with the same `repository_id` are linked |
+| `project` (display) | the main checkout's directory name, with its parent added when two checkouts would otherwise show the same name | nothing; a label | never used as a key |
+
+Views group by `repository_id` where one exists, else by `checkout_id`.
+Remote URLs and paths stay local (D5).
+
+## Joins, in order of preference
+
+### Usage to session [F]
+
+From the record: Claude `sessionId`, Codex `session_meta.payload.id` /
+OTel `conversation.id`, omp session `id` / `gen_ai.conversation.id`.
+`historical`, `authoritative`. A record without one keeps
+`session_id = null`, and is counted.
+
+### Session to checkout and repository [F]
+
+From the session's `cwd` (on the record: `historical`), through git.
+- The git lookup is `live` if the directory no longer exists or has
+  changed repository. In that case, backfill gets `checkout_id` from the
+  path hash only, marked `inferred`.
+
+### Branch [F]
+
+- **Claude and Codex:** from the record (`gitBranch`, `git.branch`).
+  `historical`, `authoritative`.
+- **omp:** its records have no branch. Current git state is used **only for
+  live sessions**, marked `live`, `inferred`. **Backfilled omp records get
+  `branch = null`.** A confidently wrong branch is worse than an unknown
+  one.
+
+### Session to pane [F]
+
+Pane is always `live`.
 
 | Method | Harness | Confidence |
 |---|---|---|
-| OTel resource attribute `usage_watch.pane`, set at launch by `usage-watch exec` | all | authoritative |
-| Hook or tap run inside the harness, reading `TMUX_PANE` | all with hooks or taps | authoritative |
-| `~/.claude/sessions/<pid>.json`, whose `tmux` field names the pane | Claude | authoritative |
+| OTel resource `usage_watch.pane`, set at launch (H3) | all | authoritative |
+| A hook or tap inside the harness, reading `TMUX_PANE` | all with hooks or taps | authoritative |
+| `~/.claude/sessions/<pid>.json` `tmux` field | Claude | authoritative |
 | `~/.omp/agent/terminal-sessions/tmux-%N` → session file | omp | authoritative |
-| The pane's process, then its open session file (`lsof`, or `/proc/<pid>/fd` on Linux) | omp, Codex | observed |
+| The pane's process, then its open session file (`lsof`, or `/proc/<pid>/fd`) | omp, Codex | observed |
 
-The pane is stored on the session and on events while live. History is
-grouped by project, account and session, never by pane, since pane IDs are
-reused.
+History is never grouped by pane: pane IDs are reused.
 
-## Session to account
+### Session to account [F]
 
-Tried in this order:
+The value is a canonical account via D7's aliases.
 
-| Method | Harness | Confidence |
-|---|---|---|
-| OTel identity attributes (`user.account_uuid` + `organization.id`; Codex `user.account_id`), hashed on receipt | Claude, Codex | authoritative |
-| Per-request `credentialId`, mapped through omp's `auth_credentials` table to its `identity_key` column (only that column is read) | omp | authoritative |
-| Transcript owner fields (`ownerAccountUuid`, `ownerOrganizationUuid`) | Claude, when present | authoritative |
-| The account signed in at the harness's home now: `~/.claude.json` `oauthAccount` for the home named by `CLAUDE_CONFIG_DIR` or the default | Claude | inferred: a re-login since the session started would mislead |
+| Method | Harness | Validity | Confidence |
+|---|---|---|---|
+| OTel identity (`user.account_uuid` + `organization.id`; Codex `user.account_id`) | Claude, Codex | historical | authoritative |
+| Per-request `credentialId`, mapped through omp's `identity_key` column | omp | historical | authoritative |
+| Transcript owner fields | Claude, when present | historical | authoritative |
+| The login at the harness's home now (`~/.claude.json` `oauthAccount`) | Claude | time_bounded (valid only if the file hasn't changed since the session started) | inferred |
 
-**Decision:** Codex sessions without telemetry get `account = null`. The
-only other place Codex records its account is its credential file, which
-usage-watch doesn't open (plan principle).
+- **Codex without telemetry** gets `account = null`. The only other record
+  of its account is its credential file, which usage-watch doesn't open.
+- **Precedence for a session's account:** the first authoritative method
+  that yields one. Conflicting authoritative values are both kept, and
+  `doctor` reports them.
 
-## A failed join
+### Role and task [X]
 
-A join that fails leaves the field null and records why, in `join_note`:
-e.g. `no-session-id`, `pane-closed`, `account-unknown:codex-no-otel`. It is
-never guessed silently. Views show the unattributed share as its own line
-("unattributed: 12%") rather than hiding it.
+- **Role:** from workmux or topology (`lane`, `orchestrator`,
+  `standalone`), `live`.
+- **Task:** from context events (phase 8), `historical` once recorded.
+
+## A failed join [F]
+
+The attribution is absent, and a `join_note` records why, e.g.
+`backfill-live-only`, `no-session-id`, `pane-closed`,
+`account-unknown:codex-no-otel`. Views show the unattributed share as its
+own line. Invariant 1 in D1 makes that share add up.

@@ -1,61 +1,73 @@
 # D7: Accounts
 
-Status: draft. Rests on [R7](../research/R7-logins-and-accounts.md),
-[R10](../research/R10-omp-extension-limits.md) and
+Status: draft, revised after review (2026-10-01). Rests on
+[R7](../research/R7-logins-and-accounts.md), [R10](../research/R10-omp-extension-limits.md),
 [R1's live capture](../research/R1-native-otel.md#live-capture-2026-10-01).
+Scope markers as in [D1](D1-model.md).
 
-## Identity
+## Canonical accounts and aliases [F]
 
-An account is the provider's own stable ID, hashed (D5):
+An account is one quota-holding identity at a provider. For Anthropic that
+means the account **plus the organization**: a personal and a team org are
+two accounts.
 
-| Provider | Raw identity | Where usage-watch reads it (never from a credential) |
-|---|---|---|
-| Anthropic | `accountUuid` + `organizationUuid` | `~/.claude.json` `oauthAccount`; Claude OTel `user.account_uuid` + `organization.id`; transcript owner fields; omp usage-cache metadata (`accountId`, `orgId`) |
-| OpenAI (Codex) | `account_id` | Codex OTel `user.account_id`; omp usage-cache metadata (`accountId`) |
+Each source identifies accounts its own way, so the registry has two
+layers:
 
-- **The organization is part of an Anthropic identity.** A personal and a
-  team org under one person are two accounts, each with its own pools.
-- **Linking across tools:** omp's `identity_key` (`email:…|org:…`) doesn't
-  equal the provider's IDs, so omp accounts are linked through the
-  usage-cache metadata's `accountId`/`orgId`. That these equal Claude's
-  `accountUuid`/`organizationUuid` is **inferred**, and is checked the
-  first time both are seen. A mismatch keeps them as two accounts and
-  `doctor` reports it.
+| Table | Holds |
+|---|---|
+| `accounts` | `account_key` (canonical), `provider`, `label` (the user's name), `plan` (when stated), `first_seen`, `last_seen`, `removed_at` |
+| `account_aliases` | `alias` (a hashed source identifier), `alias_kind` (what it is), `account_key`, `asserted_by` (source), `evidence`, `confidence`, `created_at`, `revoked_at` |
 
-## The registry
+**Alias kinds and where they come from** (never from a credential):
 
-The `accounts` table holds:
-- `key`, the hashed identity;
-- `provider`;
-- `label`, the user's name for it, such as "team" or "personal";
-- `plan`, when a source states it;
-- `first_seen` and `last_seen`;
-- `sources`, the collectors that have seen it;
-- `removed_at`, a tombstone.
+| Alias kind | Source |
+|---|---|
+| `anthropic.account_org` (`accountUuid` + `organizationUuid`) | `~/.claude.json` `oauthAccount`; Claude OTel; transcript owner fields |
+| `openai.account` (`account_id`) | Codex OTel |
+| `omp.identity_key` | omp's `auth_credentials.identity_key` column (only that column) |
+| `omp.report_account` (`accountId` + `orgId`) | omp's usage-cache metadata |
 
-- **Labels:** `usage-watch accounts` lists accounts, and
-  `usage-watch accounts label <key-prefix> <name>` names one. Unlabelled
-  accounts display as `<provider> account <first 6 of key>`.
-- **Tombstones:** an account unseen for 90 days is marked `removed_at` and
-  hidden from views, not deleted. Its history remains. Seeing it again
-  clears the mark.
+## Merging [F]
 
-## Attribution
+1. **A new alias** creates a new canonical account unless merge evidence
+   links it to an existing one.
+2. **Evidence that allows a merge,** strongest first:
+   - `same_identifier`: the same provider ID reaches us through two routes,
+     e.g. the Claude OTel account and org equal `~/.claude.json`'s, or omp's
+     report account and org equal them. **Authoritative.**
+   - `co_reported`: one source reports both identifiers together, e.g. an
+     omp usage report whose `identity_key` and `accountId` sit in the same
+     entry. **Authoritative.**
+   - `user`: the user merges two accounts with
+     `usage-watch accounts merge`. Recorded as such.
+3. **No merge on weaker grounds**: not on matching labels, plans or
+   timing.
+4. **Undoing:** a merge is a set of alias rows, so it's undone by setting
+   `revoked_at` on the aliases it added
+   (`usage-watch accounts unmerge <alias>`). Attributions that relied on
+   it are recomputed. Nothing depends on which account was seen first.
+5. **Conflicts:** when authoritative evidence points one alias at two
+   accounts, neither merge is applied, and `doctor` reports it.
 
-D2 covers how a session is joined to an account. The effect on capacity:
-- A stalled pane's pool is the account its session is attributed to.
-- If that's unknown, the pane's harness and model family pick the pool,
-  the way today's config does.
-- If that's ambiguous, the stall waits and `doctor` says why, as today.
+Whether omp's report `accountId` equals Claude's `accountUuid` is
+**inferred**. The `same_identifier` rule tests it the first time both are
+seen, rather than assuming it.
 
-## Poll budget
+## Labels and tombstones [F: fields; X: commands]
 
-No collector makes a network call (D6), so there is currently nothing to
-budget. The rule stays in the plan for any future source that does: poll
-each account at most every few minutes, with jitter, and back off on 429.
+- `usage-watch accounts` lists accounts, and `accounts label <key> <name>`
+  names one.
+- An account unseen for 90 days gets `removed_at` and is hidden, not
+  deleted. Seeing it again clears the mark.
 
-## Replaces today's config
+## Attribution for nudging [F]
 
-`[accounts.<harness>]` in the config file becomes a fallback only, for
-harnesses whose sessions can't be attributed. `init` stops asking about it
-once attribution works.
+- A stalled pane's pool is its session's attributed account (D2).
+- Whether that attribution is certain enough to act on is decided in D8.
+
+## Replaces today's config [F]
+
+`[accounts.<harness>]` in the config file becomes a fallback only, used
+when a session's account can't be attributed. D8 treats that fallback as
+`inferred`.

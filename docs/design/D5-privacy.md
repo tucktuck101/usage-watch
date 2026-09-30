@@ -1,62 +1,71 @@
 # D5: Privacy
 
-Status: draft. Rests on the plan's principle of no credentials of any kind,
-and on [R1's live capture](../research/R1-native-otel.md#live-capture-2026-10-01)
-(which identity attributes arrive).
+Status: draft, revised after review (2026-10-01). Scope markers as in
+[D1](D1-model.md).
 
-## Never stored, never logged
+## Three classes of data [F]
 
-- **Credentials of any kind:** tokens, keys, credential files, Keychain
-  items, the secret columns of other tools' databases. Collectors are
-  written so they can't reach them. For omp, only the named columns are
+| Class | Examples | Local store | Export |
+|---|---|---|---|
+| **Forbidden** | credentials of any kind; prompts, responses, system instructions, tool inputs and outputs, file contents; raw OTLP bodies; raw emails and account, org or user IDs | **never** | **never** |
+| **Developer context** | repository name and remote, branch, worktree, task, issue, PR, project name, `cwd` and other paths | yes | **opt-in per field**, conservative defaults (below) |
+| **Measurements** | token counts, capacity percentages, cost amounts, model, provider, harness, role, timestamps, hashed identities | yes | yes, within D4's cardinality rules |
+
+## Ingestion is an allowlist [F]
+
+- **Collectors and the OTLP receiver keep only fields they have a mapping
+  for** (D4's inbound table). Everything else is dropped on arrival. A new
+  harness field, including a new content field, is dropped by default.
+- **Raw bodies are never persisted.** OTLP payloads and session-file lines
+  are parsed in memory. Only mapped fields reach the store.
+- **Errors never include payloads.** A parse failure is logged as the
+  source, the field path and a size, never values.
+- The list of known content fields (`gen_ai.input.messages`,
+  `gen_ai.output.messages`, `gen_ai.system_instructions`,
+  `gen_ai.response.text`, `user_prompt.prompt`,
+  `assistant_response.response`, `codex.user_prompt.prompt`) is kept as a
+  **test**: none of them may ever map to a stored field.
+- Collectors can't reach credentials. For omp, only named columns are
   selected, never `SELECT *`.
-- **Content:** prompts, responses, system instructions, tool inputs and
-  outputs, file contents. The receiver **drops** any OTel attribute known
-  to carry content (`gen_ai.input.messages`, `gen_ai.output.messages`,
-  `gen_ai.system_instructions`, `gen_ai.response.text`,
-  `user_prompt.prompt`, `assistant_response.response`, `codex.user_prompt.prompt`),
-  even when a harness has content capture switched on.
-- **Raw identities:** emails, account IDs, org IDs and user IDs are
-  replaced by their hashed key the moment they are read. The raw value is
-  never written, logged or shown.
 
-## Hashing identities
+## Hashed identities [F]
 
-- **`HMAC-SHA256(install_secret, provider + ":" + raw_id)`, truncated to 16
-  hex characters.**
-- **`install_secret`:** 32 random bytes created on first run, in the state
-  directory with file mode 0600.
-- **Why a keyed hash:** a plain hash of an email or UUID can be reversed by
-  guessing. It would also link the same account across different people's
-  exports.
-- **What a keyed hash gives up:** it can't be reversed, and it's stable on
-  this machine. A reinstall that loses the secret gives new keys, which
-  also splits history. The state directory is what to back up.
-- **Display:** the user's own label (D7), else `<provider> account
-  <first 6 of key>`.
+- **The hash:** `HMAC-SHA256(install_secret, provider + ":" + raw_id)`,
+  truncated to 16 hex characters. Used for account aliases (D7),
+  `checkout_id` and `repository_id` (D2).
+- **`install_secret`:** 32 random bytes, created on first run, file mode
+  0600, in the state directory.
+- **Why it's keyed:** it can't be reversed by guessing, and it can't be
+  linked across installs.
+- **What that costs:** losing the secret splits history, so the state
+  directory is what to back up.
+- **Display:** the user's label, else `<provider> account <first 6 of key>`.
 
-## What's allowed
+## Export defaults [L, defaults fixed now]
 
-Local, non-secret facts the views need: `cwd`, project and repository
-names, branch, model, token counts, costs, timestamps, window percentages.
-All of these stay in the local database.
+- Off by default.
+- When on, it sends measurements, plus only the developer-context fields
+  the user switches on:
 
-## Export (E1)
+| Field | Default | When switched on |
+|---|---|---|
+| project | off | display name only |
+| repository | off | hashed `repository_id` only; the remote URL is never exported |
+| branch | off | as-is, or sanitised to its prefix (e.g. `fix/…`), user's choice |
+| task, issue, PR | off | as-is; free text, so opt-in only |
+| paths, `cwd` | never | none |
+| account | hashed key | label only if the user allows it |
 
-- Off by default. When switched on, nothing leaves except aggregates and
-  events built from D1 records.
-- **Paths are reduced to project names.** `cwd` is never exported.
-- Identity is the hashed key, or the label if the user allows it.
-- The D4 cardinality caps apply.
+- Export has its own allowlist of D1 fields, so a field added to the store
+  later doesn't leave the machine until it's added to that list.
 
-## Diagnostics
+## Diagnostics [F]
 
-`doctor --capture` keeps its redaction: home directory, request IDs and
-emails. Log lines never include raw identities. Error messages name files
-and fields, never values.
+`doctor --capture` keeps its redaction: home directory, request IDs,
+emails. Logs never contain forbidden-class data. Messages name files and
+fields, never values.
 
-## Deletion
+## Deletion [L]
 
-`usage-watch forget --account <label>|--project <name>|--before <date>`
-deletes matching records. It's a later task, noted here so the schema keys
-make it simple.
+`usage-watch forget --account|--project|--before` deletes matching records.
+The keys in D3 are chosen to make it simple.

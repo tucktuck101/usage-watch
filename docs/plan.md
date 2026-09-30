@@ -118,8 +118,10 @@ harnesses' OTel.
 
 Written under `docs/design/` and agreed before building.
 
-**Drafts of D1 to D7 written 2026-10-01, awaiting review:** see
-[the design index](design/README.md). Each marks the decisions it asks for.
+**D1 to D8 drafted and revised after an external review, 2026-10-01:** see
+[the design index](design/README.md). Each document marks what must be
+settled before the foundation build ([F]), what is only an extension point
+([X]), and what is later ([L]).
 
 | # | Task | Needs |
 |---|---|---|
@@ -130,6 +132,7 @@ Written under `docs/design/` and agreed before building.
 | D5 | Privacy: no prompts, emails and account IDs hashed or dropped, redaction, what export may send | D1 |
 | D6 | Collector interface: poll or push, deduplication, a watermark per source, handling disagreement | D1, D3 |
 | D7 | Account registry and identity: the stable identity per provider, hashing, user labels, removed accounts, several token sources per account, confirming a token's identity whenever it changes, choosing between valid tokens, the poll budget per account | R7, D5 |
+| D8 | Nudge policy: the exact evidence a nudge needs (fresh stall, account certainty, the blocking window clear by a fresh anchor or a recovery signal, no other window known to block) | D1, D2, D6, D7 |
 
 ### Phase 3: foundation
 
@@ -218,11 +221,22 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Provider logic may be ported from OpenUsage (MIT) with its notice kept; its name and branding are not used |
 | 2026-09-30 | `openusage` is removed as a dependency, for maintainability, now rather than with C1. Until C1's readers land, usage-watch has no capacity source: it still finds and shows stalled panes, but they wait instead of being nudged |
 | 2026-09-30 | **usage-watch reads no credential of any kind** (owner decision, to stay within Anthropic's terms: R8, R9). See the principle. It also rules out an opt-in "direct read" mode |
+| 2026-10-01 | Design review adopted (all 20 points; refinements on #2, #6, #9). Key outcomes: per-dimension attributions with validity classes; source observations reconciled into canonical usage events, disagreement kept; explicit token field names with a derived total input; auxiliary calls inside totals; three kinds of capacity evidence (anchor, recovery signal, estimate), estimates computed at query time and never used for nudges; per-source freshness for display and control; collector runtime separate from nudging and views; cost bases plus billing route, only `actual_billed` called spend; allowlists for ingestion and export; developer context export opt-in; `checkout_id` versus `repository_id`; reversible account aliases; no moving top-N on metrics; "last looked" with opened, last-seen and closed times; invariants as tests; nudge conditions in D8 |
+| 2026-10-01 | Only one usage source per harness counts as primary (the session log) until a shared request ID links it to another, so unlinkable sources can't double count |
 | 2026-10-01 | Users' agents can extend usage-watch through `usage-watch extend` and a local extensions folder. Extensions are experimental, the user's responsibility, and observe-only unless allowed (X1–X3) |
 | 2026-09-30 | Capacity is anchors plus estimates: real readings from the harnesses, with the usage stream filling the gaps between them (D1, V4) |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
 ## Open questions
+
+- **Billing route per request** for Claude and omp: nothing seen so far
+  marks whether a request used a subscription or an API key (Codex OTel has
+  `auth_mode`). Until found, those costs are `billing route unknown` and
+  never shown as spend (D1).
+- **Token semantics to verify per source before trusting a mapping** (D4):
+  whether omp's OTel `input` includes cache reads, whether Codex's
+  rollout `input_tokens` includes cached input, and whether each source's
+  reasoning figure is a subset of its output.
 
 - Codex account identity without a credential: its OTel `user.account_id`
   (seen in the R1 live capture) works when telemetry is on. Without

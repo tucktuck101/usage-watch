@@ -1,66 +1,108 @@
-# D3: Storage
+# D3: Storage and runtime
 
-Status: draft.
+Status: draft, revised after review (2026-10-01). Scope markers as in
+[D1](D1-model.md).
 
-## Engine and place
+## Engine and place [F]
 
-- **SQLite, from the standard library**, in `$XDG_STATE_HOME/usage-watch/usage.db`
-  (default `~/.local/state/usage-watch/usage.db`), in WAL mode.
-- **One writer:** the collector runtime (`usage-watch run`, or
-  `dashboard --watch`), under the existing one-per-machine lock. Every
-  command that only reads opens the database read-only. So `status`,
-  `usage` and the dashboard never block collection, and a crash can't
-  leave two writers.
-- Local only. Nothing here leaves the machine unless export (E1) is
-  switched on.
+- SQLite from the standard library, at
+  `$XDG_STATE_HOME/usage-watch/usage.db` (default
+  `~/.local/state/usage-watch/usage.db`), in WAL mode.
+- Local only. Nothing leaves the machine unless export (E1) is switched on.
 
-## Tables
+## Four parts, kept separate [F]
+
+| Part | Does | Writes the store? |
+|---|---|---|
+| **Collector runtime** | runs collectors (D6), reconciles observations, writes records | yes, **the only writer** |
+| **Nudge policy** | reads the store and screens, decides and types nudges (D8) | only its own decisions |
+| **Dashboard** | reads the store, draws | only its `looks` row |
+| **Queries** (`status`, `usage`, …) | read the store | only their `looks` row |
+
+- History collection doesn't depend on nudging or on the dashboard.
+- For the proof of concept they share one process: `usage-watch run` hosts
+  the collector runtime, with the nudge policy on by default and
+  `--no-nudge` to collect only.
+- `dashboard --watch` hosts the same pair.
+- The one-per-machine lock belongs to the **collector runtime**, not to
+  nudging.
+- A separate `usage-watch collect` daemon can come later [L] without
+  changing any of this.
+
+**When no collector is running**, the store's `collector_status` table
+tells readers:
+- when each collector last ran and succeeded;
+- its last error, as field names only (D5).
+
+Every read-only command then shows either
+`collector running, data as of 14:02:31`, or
+`no collector running; data as of yesterday 18:40; start one with: usage-watch run --no-nudge`.
+Stale data is always shown with its age, never passed off as current.
+
+## Tables [F]
 
 | Table | Holds | Key |
 |---|---|---|
-| `capacity_samples` | D1 capacity samples | `(account, window, source, observed_at)` |
-| `usage_events` | D1 usage events | `(source, request_key)`, unique, which is what makes re-reading a file harmless |
-| `cost_events` | D1 cost events | `(usage_ref, basis)` |
-| `state_samples` | agent-state samples | `(pane, observed_at)` |
-| `context_events` | context events | id |
-| `sessions` | the session entity | `(harness, session_id)` |
-| `accounts` | the account registry (D7) | `key` (hashed) |
-| `watermarks` | per collector: how far it has read | `(collector, stream)` |
-| `looks` | "last looked" markers | `(who, view)` |
+| `usage_observations` | what each source said about each request | `(source, source_request_key)` |
+| `usage_events` | canonical requests (D1) | `usage_id` |
+| `attributions` | enrichment per subject and dimension (D1, D2) | `(subject_kind, subject_id, dimension, method)` |
+| `capacity_samples` | anchors | `(account, window, source, observed_at)` |
+| `limit_events` | hit and reset notices | `(source, source_key)` |
+| `cost_events` | D1 cost events | `(scope_kind, scope_id, source, basis, price_version)` |
+| `state_samples` | agent states | `(pane, observed_at)` |
+| `context_events` | context [X] | id |
+| `sessions` | sessions | `(harness, session_id)` |
+| `checkouts` | `checkout_id`, `repository_id`, display name, local path | `checkout_id` |
+| `accounts`, `account_aliases` | D7 | D7 |
+| `watermarks` | how far each collector has read | `(collector, stream)` |
+| `collector_status` | liveness for readers | `collector` |
+| `looks` | "last looked" (below) | `(who, view)` |
+| `nudges` | the nudge policy's decisions and their evidence (D8) | id |
 | `schema_version` | one row | |
 
-## Schema changes
+## Schema changes [F]
 
-A `schema_version` row, with forward-only migrations numbered in code and
-run by the writer at start-up, inside a transaction. A read-only command
-that finds a newer schema than it knows exits with a prompt to upgrade.
-There are no down-migrations. A backup copy is taken before each migration.
+- Forward-only migrations numbered in code, run by the writer at start-up
+  inside a transaction, with a backup copy taken first.
+- A read-only command that finds a newer schema than it knows exits with a
+  prompt to upgrade.
 
-## Retention
-
-Configurable. The defaults below keep a year of what views need, and a week
-of what's only live detail:
+## Retention [F: mechanism; defaults configurable]
 
 | Records | Kept | Then |
 |---|---|---|
-| usage and cost events | 400 days | deleted |
-| capacity samples | 30 days at full detail | one per window per hour, kept 400 days |
+| usage observations and usage events | 400 days | deleted together |
+| attributions, cost events | with their subject | deleted with it |
+| capacity samples | 30 days in full | one per window per hour, 400 days |
+| limit events, nudges | 400 days | deleted |
 | state samples | 7 days | deleted |
-| context events, sessions, accounts | while referenced | deleted with their last reference |
+| sessions, checkouts, accounts | while referenced | deleted with their last reference |
 
-Retention runs daily in the writer. The Claude transcript's own retention is
-about 30 days (R2), so continuous collection, not occasional backfill, is
-what preserves history.
+- Observations are kept as long as events, so reconciliation can be re-run
+  over them.
+- Continuous collection is what preserves history, because Claude keeps
+  only about 30 days of transcripts (R2).
 
-## "Last looked"
+## "Last looked" [F]
 
-`looks` records when a person or an agent last opened a view (`who` is
-`cli`, `dashboard` or a name the caller passes). "Since I last looked"
-(V2) reads from that marker, and advances it only when the view is shown in
-full, not when it's piped or asked for as `--json`.
+`looks` has one row per `(who, view)`. `who` is `cli`, `dashboard` or a name
+the caller passes. Each row holds three timestamps:
+
+| Timestamp | Set when |
+|---|---|
+| `opened_at` | the view is opened |
+| `last_seen_at` | each successful full render. For the dashboard, every refresh |
+| `closed_at` | a normal close. For one-shot commands, the same moment as `opened_at` |
+
+**V2 "since I last looked" means since the previous look's `closed_at`.**
+If the previous look has no `closed_at` because it exited abnormally, its
+`last_seen_at` is used instead, and the view says so. A refresh never moves
+the marker V2 uses. Views are independent: opening one never moves
+another's row. Piped or `--json` output records nothing unless asked with
+`--mark`.
 
 ## Size
 
-Rough guide: one usage event is about 300 bytes including indexes. At 5,000
-requests a day, that's about 1.5 MB a day, or about 0.6 GB for 400 days.
-Capacity samples, even at one a minute per window, are smaller than that.
+A usage observation plus its event and attributions come to about 700
+bytes. At 5,000 requests a day that's about 3.5 MB a day, or about 1.4 GB
+over 400 days. Retention is configurable for smaller disks.
