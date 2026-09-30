@@ -261,6 +261,7 @@ class WritePath:
             _op("reconcile", "reconcile_observation")(
                 conn, observation_id, primary=bool(getattr(source, "primary", False)))
         elif isinstance(item, model.AttributionEvidence):
+            item = _resolve_account_alias(conn, item)
             _op("attribution", "add_evidence")(conn, item)
             # Resolved at the evidence's first_observed_at, session subjects
             # included; resolve stores the effective row itself.
@@ -270,6 +271,26 @@ class WritePath:
             _write_record(conn, item)
         else:
             raise TypeError("unknown item type")
+
+
+ALIAS_PREFIX = "alias:"
+
+
+def account_alias_value(provider: str, alias_kind: str, alias_hash: str) -> str:
+    """The value a collector puts on `account` evidence. Collectors see only an
+    alias (already keyed-hashed); the write path turns it into the canonical
+    account key through the registry (D7), since collectors never touch the store."""
+    return f"{ALIAS_PREFIX}{provider}:{alias_kind}:{alias_hash}"
+
+
+def _resolve_account_alias(conn: sqlite3.Connection, ev: "model.AttributionEvidence"):
+    if ev.dimension != "account" or not ev.value.startswith(ALIAS_PREFIX):
+        return ev
+    provider, alias_kind, alias_hash = ev.value[len(ALIAS_PREFIX):].split(":", 2)
+    account_key = _op("accounts", "assert_alias")(
+        conn, provider=provider, alias_kind=alias_kind, alias_hash=alias_hash,
+        asserted_by=ev.source, evidence="reported", confidence=ev.confidence)
+    return dataclasses.replace(ev, value=account_key)
 
 
 # --- Watermarks (D6) ---------------------------------------------------------------------
