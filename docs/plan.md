@@ -118,6 +118,9 @@ harnesses' OTel.
 
 Written under `docs/design/` and agreed before building.
 
+**Drafts of D1 to D7 written 2026-10-01, awaiting review:** see
+[the design index](design/README.md). Each marks the decisions it asks for.
+
 | # | Task | Needs |
 |---|---|---|
 | D1 | Canonical model: capacity samples, usage events, cost events, agent-state samples and context events, each with source and confidence. Capacity samples are either **anchors** (a real reading from a harness: `authoritative` or `observed`) or **estimates** (interpolated from the usage stream, `estimated`), never mixed. One counting rule for cached tokens across sources | R1–R3 |
