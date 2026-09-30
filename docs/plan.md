@@ -47,9 +47,13 @@ Quota recovery stays as one capability of the wider tool.
   never how many tokens.
 - **Views build on what exists.** The dashboard and commands read normalised
   state. They don't talk to sources directly.
-- **Safety first.** Credentials are read-only and never refreshed, logged or
-  sent anywhere but their own provider. Prompts are never stored. Traffic
-  interception is out of scope unless everything else proves insufficient.
+- **No credentials of any kind.** usage-watch never reads a token, a key
+  or a credential file (`auth.json`, `.credentials.json`, the Keychain, the
+  secret columns of omp's `auth_credentials`). Non-secret identity fields may
+  be read where they sit apart from any secret: Claude's `~/.claude.json`
+  `oauthAccount`, OTel attributes, or only the `identity_key` column in
+  omp's table. Limits come only from what the harnesses hand out themselves.
+  Prompts are never stored. Traffic interception is out of scope.
 - **Standard library first.** A dependency is allowed only when it clearly
   adds value, keeps things simple, and there is no reasonable standard
   library way. The justification is recorded in the Decisions log.
@@ -98,6 +102,7 @@ credential-free way around it: Claude Code's own status line data.
 | R7 | Where does each harness keep its logins, and how can a pane's account be told? Known leads: Claude's default home and `CLAUDE_CONFIG_DIR` homes (Keychain entry suffixed by a hash of the directory), Claude Swap's saved accounts, Claude Desktop's organizations (macOS only); Codex's `CODEX_HOME`, `~/.codex`, `~/.config/codex` and sibling `-*` homes; omp's `auth_credentials` (several logins per provider, each with an identity key). Open: which login an omp pane is using at a given moment | Several subscriptions per provider, attributed correctly |
 | R8 | How does omp authenticate its accounts, and would usage-watch holding its own logins (the way omp does) be easier or more reliable than discovering the harnesses' logins? | May replace discovery in D7 and C1 |
 | R9 | Does Claude Code expose its own plan limits locally, without a credential (status line input, a local cache, an OTel signal)? | Claude capacity without touching a Claude credential (R8) |
+| R10 | Can an omp extension read omp's own usage and limit state at each turn, without triggering a fetch, and write a snapshot? | Per-turn readings for every account omp holds, closing the hourly gap for team plans |
 
 ### Phase 2: design
 
@@ -105,7 +110,7 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| D1 | Canonical model: capacity samples, usage events, cost events, agent-state samples and context events, each with source and confidence | R1–R3 |
+| D1 | Canonical model: capacity samples, usage events, cost events, agent-state samples and context events, each with source and confidence. Capacity samples are either **anchors** (a real reading from a harness: `authoritative` or `observed`) or **estimates** (interpolated from the usage stream, `estimated`), never mixed. One counting rule for cached tokens across sources | R1–R3 |
 | D2 | Correlation keys and join rules, including what a failed join looks like | R6 |
 | D3 | Storage: SQLite (standard library), schema versioning, retention, "last looked" markers | D1 |
 | D4 | Attribute names: standard GenAI versus `usage_watch.*`; which fields may go on metrics versus traces and events | R4 |
@@ -140,6 +145,7 @@ Written under `docs/design/` and agreed before building.
 | V1 | `usage-watch usage`: breakdowns by provider, account, model, harness, project, branch, role or session, over a time range |
 | V2 | "Since I last looked" |
 | V3 | Dashboard panels: burn rate, time until each pool is empty, trends, peak concurrency |
+| V4 | Calibrated capacity estimate: between anchors, estimate each pool from the usage stream, using a per-account rate learned from pairs of anchors ("the pool moved 4% while this much cost-weighted usage happened"). Shown as an estimate with its last anchor's age. A new anchor that jumps more than local usage explains flags usage elsewhere (web, phone, other machines) |
 
 ### Phase 6: cost
 
@@ -184,17 +190,18 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Plan and research findings live in this repo, under `docs/` |
 | 2026-09-30 | Standard library first; a dependency needs a recorded justification (see Principles) |
 | 2026-09-30 | Goal is every view listed; the proof of concept is the set in Scope |
-| 2026-09-30 | Credentials are read-only: never refreshed or written |
+| 2026-09-30 | ~~Credentials are read-only: never refreshed or written~~ Superseded below: no credentials at all |
 | 2026-09-30 | Provider logic may be ported from OpenUsage (MIT) with its notice kept; its name and branding are not used |
 | 2026-09-30 | `openusage` is removed as a dependency, for maintainability, now rather than with C1. Until C1's readers land, usage-watch has no capacity source: it still finds and shows stalled panes, but they wait instead of being nudged |
+| 2026-09-30 | **usage-watch reads no credential of any kind** (owner decision, to stay within Anthropic's terms: R8, R9). See the principle. It also rules out an opt-in "direct read" mode |
+| 2026-09-30 | Capacity is anchors plus estimates: real readings from the harnesses, with the usage stream filling the gaps between them (D1, V4) |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
 ## Open questions
 
-- **Decision required (R8, R9):** adopt "usage-watch reads no credential
-  of any kind". Anthropic's terms forbid collecting or intermediating
-  Claude.ai tokens, and R9 shows every limit usage-watch needs is available
-  without one, for Claude and Codex alike. Recommended: adopt it.
+- Codex account identity without a credential: Codex writes `account_id`
+  only in `auth.json`, which holds its tokens. Candidates: its OTel
+  `user.account_id`, or its `app-server`. C5 for Codex waits on this.
 - **Decision required (R9):** whether `init` may wrap the user's Claude
   Code `statusLine` command. Recommended: yes, only when the user asks,
   with a preview of the change and an undo.
