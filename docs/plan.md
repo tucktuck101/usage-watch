@@ -83,8 +83,9 @@ evidence. A question with no evidence stays open.
 [R2](research/R2-local-token-records.md), [R3](research/R3-capacity-sources.md),
 [R4](research/R4-otel-genai-conventions.md), [R5](research/R5-pricing-sources.md),
 [R6](research/R6-joins.md), [R7](research/R7-logins-and-accounts.md),
-[R8](research/R8-omp-authentication.md). R8 found a terms-of-service
-constraint that changes C1 (see Open questions).
+[R8](research/R8-omp-authentication.md), and [R9](research/R9-credential-free-limits.md).
+R8 found a terms-of-service constraint on Claude credentials. R9 found a
+credential-free way around it: Claude Code's own status line data.
 
 | # | Question | Why |
 |---|---|---|
@@ -126,7 +127,7 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Capacity for every account discovered (D7), from sources that need no Claude credential: omp's `usage_history` (or `omp usage --json`), Codex's `rate_limits` in its session files, on-screen reset hints, and whatever R9 finds. A live Codex read with its login only if the owner accepts the unclear policy. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
+| C1 | Capacity for every account discovered (D7), reading no credential of any kind (R9): a Claude **status line tap** (opt-in, reversible wrap of the user's `statusLine` command that records `rate_limits`); Claude Code's `cachedUsageUtilization`, honouring its age; transcript limit hit and reset events; omp's `usage_history` for accounts omp holds; Codex's `rate_limits` from its session files; on-screen reset hints. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
 | C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
 | C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
@@ -190,15 +191,16 @@ insufficient, given what it means for security and maintenance.
 
 ## Open questions
 
-- **Decision required (R8):** adopt "usage-watch never reads, stores or
-  sends a Claude.ai credential or session token". Anthropic's terms forbid
-  developers from collecting or intermediating them, which rules out C1's
-  original plan of reading Claude Code's token for the usage endpoint.
-  Recommended: adopt it, and take Claude capacity only from credential-free
-  sources (C1 as revised).
-- **Decision required (R8):** whether to read Codex capacity live with
-  Codex CLI's login. OpenAI's position is unpublished. Recommended: no;
-  use the free `rate_limits` in Codex's session files.
+- **Decision required (R8, R9):** adopt "usage-watch reads no credential
+  of any kind". Anthropic's terms forbid collecting or intermediating
+  Claude.ai tokens, and R9 shows every limit usage-watch needs is available
+  without one, for Claude and Codex alike. Recommended: adopt it.
+- **Decision required (R9):** whether `init` may wrap the user's Claude
+  Code `statusLine` command. Recommended: yes, only when the user asks,
+  with a preview of the change and an undo.
+- Whether Team and Enterprise plans get `rate_limits` in the status line
+  (R9; the docs say Pro and Max only). Until confirmed, Team plans rely on
+  omp's record.
 
 - Whether the team-plan token answers the usage endpoint when not
   recently polled (see the 0.1 finding).
