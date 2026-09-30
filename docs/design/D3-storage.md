@@ -47,7 +47,7 @@ non-blocking test and never waits on it.
 
 | Field | Meaning |
 |---|---|
-| `runtime_id` | this run of the runtime |
+| `runtime_id` | this run of the runtime: a random integer (the table's `INTEGER PRIMARY KEY`) |
 | `pid` | its process ID |
 | `started_at` | when it started |
 | `heartbeat_at` | updated every 10 s |
@@ -63,7 +63,7 @@ A reader combines the two:
 
 **`collector_status` is about data age, not liveness.** Per collector it
 holds:
-- when it last ran and when it last succeeded;
+- when it last ran and last succeeded (`last_run_at`, `last_success_at`), and when it last wrote new data (`last_new_at`);
 - its last error, as field names only (D5);
 - the number of unlinked secondary observations (orphans) per source,
   counted by query: link state is derived, not stored (D1).
@@ -100,7 +100,7 @@ table says otherwise.
 | `accounts` | D7. `account_key` is a random opaque local ID (128-bit hex), generated when the account is created, never derived from an alias | `account_key` |
 | `account_aliases` | D7. Also `evidence`, `confidence`, `verified_by`, `first_seen`, `last_confirmed`, `revoked_at`. Several sources asserting one alias are separate rows; one alias asserted against different accounts is separate rows too (a conflict, D7) | unique `(alias_kind, alias_hash, account_key, asserted_by)` |
 | `account_merges` | `merge_id`, `from_key`, `into_key`, `evidence`, `verified_by`, `created_at`, `revoked_at`. The canonical account is the result of following unrevoked merges. Undoing a merge sets `revoked_at`; aliases never move | `merge_id` |
-| `watermarks` | how far each collector has read: `(path, inode, byte offset)` per file (D6) | `(collector, file)` |
+| `watermarks` | how far each collector has read: `(path, inode, byte offset)` per file for tail sources (D6); a source with one opaque position (the pull contract's watermark string) uses a single row with `file = ''` | `(collector, file)` |
 | `collector_status` | data age and errors per collector (above) | `collector` |
 | `runtime` | the heartbeat (above): the current run plus the last 20 | `runtime_id` |
 | `looks` | "last looked" (below). **Owner: each view, its own row** | `(who, view)` |

@@ -164,7 +164,7 @@ prove omission means zero, with the evidence cited here. Otherwise it is
 |---|---|---|
 | record | `error:"rate_limit"` records and system notices (R9) | an adapter match on a pane |
 | `stream_key` (keyed hash, D5) | the record's session | the pane's `session_key` when joined, else a keyed hash of pane ID plus pane PID, so a reused pane ID can't collide |
-| `source_key` | the line's `uuid` (to confirm from a recorded sample) | the adapter's `error_key` |
+| `source_key` | the line's `uuid` (to confirm from a recorded sample) | the stall occurrence's `stall_id` (D8), never the `error_key` alone |
 | `kind` | `hit` or `reset`, from which notice it is (the notice's field: to confirm from a recorded sample) | the adapter's classification |
 | `window` | if the notice states it ("session limit") | if the message states it |
 | `resets_at` | parsed from the notice text ("resets …", "continuing automatically at …") | the adapter's reset hint ("try again at 10:29 PM", R3) |

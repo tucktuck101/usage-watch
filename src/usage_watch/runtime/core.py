@@ -94,6 +94,7 @@ _TABLES: dict[type, tuple[str, tuple[str, ...], str | None]] = {
     model.ContextEvent: ("context_events", ("context_event_id",), "context_event_id"),
     model.CostEvent: ("cost_events", ("scope_kind", "scope_id", "source", "basis", "price_version"),
                       None),
+    model.Checkout: ("checkouts", ("checkout_id",), None),
 }
 
 # Columns a later record may clear or must overwrite, rather than keep when absent.
