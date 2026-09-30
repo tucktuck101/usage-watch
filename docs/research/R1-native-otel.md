@@ -95,12 +95,71 @@ the binary. **Inferred** means reasoned from code or naming, not observed.
   `gen_ai.response.text`) must stay off whenever usage-watch sets
   telemetry up.
 
-## Open
 
-1. Codex: is `statsig` its default metrics exporter, meaning metrics go to
-   OpenAI? And do `codex.turn.*` metrics go out over OTLP when `[otel]` is
-   set? This needs a live capture.
-2. Claude Code: what `OTEL_METRICS_INCLUDE_REPOSITORY` adds.
-3. omp: whether its logs carry `session.id` or cwd.
-4. Whether each harness passes `OTEL_RESOURCE_ATTRIBUTES` into its exports.
-5. What gates omp's `gen_ai.response.text`.
+## Live capture (2026-10-01)
+
+Each harness was run once, non-interactively, with a trivial prompt and
+telemetry sent only to a throwaway receiver on 127.0.0.1. Content capture was
+left at its defaults, no harness config file was written (Codex took its
+settings as `-c` flags), and the receiver and captures were deleted
+afterwards. omp ran twice: the first capture came back empty because of a
+receiver bug, fixed before the second run.
+
+| | Claude Code | Codex CLI | omp |
+|---|---|---|---|
+| Protocol used | http/json | otlp-http json | http/protobuf |
+| Signals seen | metrics, logs | metrics, logs, traces | metrics, logs, traces |
+| **`OTEL_RESOURCE_ATTRIBUTES` passed through** | **yes**, and copied onto every data point and event | **yes** | **yes** |
+| Token usage | metric `claude_code.token.usage` (`type`), event `api_request` | metric `codex.turn.token_usage` (`token_type`), span `session_task.turn`, log `codex.sse_event` | metric `gen_ai.client.token.usage` (`gen_ai.token.type`), span `chat <model>` |
+| Cost | `claude_code.cost.usage`; `api_request.cost_usd`, plus an undocumented `cost_usd_micros` | `codex.turn.cost_microusd` **not emitted** on a ChatGPT-login run | reported 0 on a subscription run |
+| Session ID | `session.id` on everything | `conversation.id` on logs and spans, **not on metrics** | `gen_ai.conversation.id` on spans; logs join through their trace |
+| cwd | none | on span `run_sampling_request` | none |
+| Identity attributes | `user.email`, `user.account_uuid`, `user.account_id`, `organization.id` on everything | `user.email`, `user.account_id` on events | none |
+| Prompt content by default | redacted (`<REDACTED>`); only lengths sent | redacted (`[REDACTED]`) | none seen |
+
+**Answers to the open questions:**
+
+1. **Codex.**
+   - Setting `metrics_exporter` sends its metrics over OTLP (verified).
+   - Whether `statsig` is the *default* metrics destination is still not
+     observed: checking would have sent data off the machine.
+2. **Claude `OTEL_METRICS_INCLUDE_REPOSITORY`.**
+   - Per the binary, it adds `vcs.repository.url.full`, `vcs.owner.name`,
+     `vcs.repository.name` and `vcs.provider.name` from the git remote, and
+     is off by default (inferred).
+   - The run was outside a repo, so nothing was added. No cwd attribute
+     exists (verified).
+3. **omp logs** carry no session ID or cwd. They join to a conversation
+   through their trace ID (verified).
+4. **Resource attributes pass through for all three** (verified). This is
+   how usage-watch attributes telemetry to a pane and project: set
+   `usage_watch.pane`, `usage_watch.project` and so on at launch (H3).
+5. **No prompt text left any harness** with default settings (verified).
+
+**Other observations:**
+- Codex is verbose: about 1.8 MB for one prompt, and about 60 metric kinds.
+- omp exports spans for its own auxiliary "judgment" model calls, which
+  must not be counted as the user's model usage without care.
+- **A probe run triggers the user's own harness hooks.** Here, Claude Code
+  and Codex hooks that forward to a tracing service ran during the probes.
+  Any future automated run must account for that.
+
+**Consequences:**
+- C3's receiver needs both http/json and http/protobuf. omp speaks only
+  the latter, so protobuf decoding is the first dependency to justify
+  (D6).
+- Pane attribution for telemetry is settled: resource attributes set at
+  launch.
+- Identity attributes arrive on Claude and Codex telemetry and must be
+  hashed on receipt (D5). They also answer the open question of how to
+  identify a Codex account without reading its credential file: its OTel
+  `user.account_id`.
+
+## Open (after the live capture)
+
+1. Codex: is `statsig` its default metrics destination, sending metrics to
+   OpenAI when no exporter is set? This needs a network-level check.
+2. Codex: what makes it emit `codex.turn.cost_microusd` (API-key login?).
+3. Claude Code: confirm the `vcs.*` attributes live, inside a git repo with
+   a remote.
+4. What gates omp's `gen_ai.response.text`.

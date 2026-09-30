@@ -96,6 +96,10 @@ evidence. A question with no evidence stays open.
 [R8](research/R8-omp-authentication.md), and [R9](research/R9-credential-free-limits.md).
 R8 found a terms-of-service constraint on Claude credentials. R9 found a
 credential-free way around it: Claude Code's own status line data.
+[R10](research/R10-omp-extension-limits.md) found omp keeps each login's
+latest limits in its database cache, about a minute fresh, readable
+without any credential. R1 now includes a live capture of all three
+harnesses' OTel.
 
 | # | Question | Why |
 |---|---|---|
@@ -138,7 +142,7 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Capacity for every account discovered (D7), reading no credential of any kind (R9): a Claude **status line tap** (opt-in, reversible wrap of the user's `statusLine` command that records `rate_limits`); Claude Code's `cachedUsageUtilization`, honouring its age; transcript limit hit and reset events; omp's `usage_history` for accounts omp holds; Codex's `rate_limits` from its session files; on-screen reset hints. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
+| C1 | Capacity for every account discovered (D7), reading no credential of any kind (R9): a Claude **status line tap** (opt-in, reversible wrap of the user's `statusLine` command that records `rate_limits`); Claude Code's `cachedUsageUtilization`, honouring its age; transcript limit hit and reset events; omp's `usage_cache` entries for accounts omp holds (R10, about a minute fresh; `usage_history` as the hourly fallback); Codex's `rate_limits` from its session files; on-screen reset hints. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
 | C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
 | C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
@@ -217,9 +221,10 @@ insufficient, given what it means for security and maintenance.
 
 ## Open questions
 
-- Codex account identity without a credential: Codex writes `account_id`
-  only in `auth.json`, which holds its tokens. Candidates: its OTel
-  `user.account_id`, or its `app-server`. C5 for Codex waits on this.
+- Codex account identity without a credential: its OTel `user.account_id`
+  (seen in the R1 live capture) works when telemetry is on. Without
+  telemetry it's still open; Codex writes `account_id` otherwise only in
+  `auth.json`, which holds its tokens.
 - **Decision required (R9):** whether `init` may wrap the user's Claude
   Code `statusLine` command. Recommended: yes, only when the user asks,
   with a preview of the change and an undo.
