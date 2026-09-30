@@ -24,7 +24,7 @@ everywhere.
 
 | Class | Meaning | `valid_from`, `valid_to` | May be recorded for |
 |---|---|---|---|
-| `historical` | From the record itself, true whenever it's read | both null: holds for the subject at any time | any subject, including backfill |
+| `historical` | From the record itself, true whenever it's read | `valid_from = 0` (unbounded start, the NOT NULL sentinel D1 and D3 use) and `valid_to` null: holds for the subject at any time | any subject, including backfill |
 | `live` | From the machine's current state | `valid_from = first_observed_at`; `valid_to = last_confirmed_at`, closed when no longer confirmed | only subjects that are **live**: seen in a running harness process during this collection pass |
 | `time_bounded` | From current state, but holding only within an explicit span | `valid_from` is when that state was last seen to change; `valid_to` is null while it's current, and closed when the same method sees a new value | only while `valid_from` is knowable. Otherwise the method records `live` evidence instead |
 
