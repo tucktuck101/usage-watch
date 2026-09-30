@@ -1,6 +1,6 @@
 # D1: The model
 
-Status: draft, revised after second review (2026-10-01). Rests on
+Status: draft, revised after third review (2026-10-01). Rests on
 [R1](../research/R1-native-otel.md), [R2](../research/R2-local-token-records.md),
 [R3](../research/R3-capacity-sources.md), [R9](../research/R9-credential-free-limits.md),
 [R10](../research/R10-omp-extension-limits.md).
@@ -112,7 +112,8 @@ policy and views read the effective account.
 | `status` | `ok`, `warning`, `exhausted` or `unknown` |
 | `source`, `confidence`, `observed_at` | provenance |
 
-**Identity:** `(source, stream_key, window, observed_at)`. No record key
+**Identity:** `(source, stream_key, window, observed_at)`, all NOT NULL. A
+source that names no window records `other:unstated`. No record key
 includes `account`.
 
 ### Limit event [F]
@@ -122,7 +123,8 @@ transcript notices, screen messages. Fields: `limit_event_id` (surrogate
 integer), `stream_key` (keyed-hashed, D5: the session, for transcript
 notices), `source_key` (the source's own key for the notice), `window` if
 stated, `kind` (`hit` or `reset`), `resets_at` if stated, and provenance.
-**Identity:** `(source, stream_key, source_key)`. Its account comes through **effective attribution**
+**Identity:** `(source, stream_key, source_key)`, all NOT NULL; `window`
+is not part of it. Its account comes through **effective attribution**
 (`subject_kind` `limit_event`, dimension `account`); the nudge policy and
 views read the effective account. A `reset` event is a recovery signal.
 
@@ -130,7 +132,7 @@ views read the effective account. A `reset` event is a recovery signal.
 
 What **one source** said about **one request**:
 - `observation_id`: surrogate integer, used for references;
-- **identity:** `(source, stream_key, source_request_key)`:
+- **identity:** `(source, stream_key, source_request_key)`, all NOT NULL:
   - `stream_key` is fixed when the observation is first stored, and never
     changes. For a pull source it is the `session_key`, which is normally
     known from the file header before any record (Claude path, Codex
@@ -140,26 +142,54 @@ What **one source** said about **one request**:
   - `source_request_key` is whatever that source uses, scoped to its
     stream. **A collector that can't produce a stable key per stream may
     not emit observations;**
+- `provider_request_key`, nullable: a keyed hash (D5 namespace
+  `request:<provider>`) of the provider's own request ID, where the source
+  has one: Claude transcript `requestId`, Claude OTel `request_id`; omp
+  `responseId` / `gen_ai.response.id` only once verified equal. It **only**
+  proves that observations from different sources refer to the same
+  provider request. It is not part of the identity;
 - `parser_version`, `observed_at`;
 - `harness`, `provider`, `model`, `session_key`;
 - the token fields above, plus `native` (the source's numeric fields);
 - `auxiliary`: set for a harness's own side calls, such as omp's judgment
-  model;
-- `link_state`: `primary`, `linked` or `orphan` (below, D6).
+  model.
 
-**Within one source, repeats collapse before they become an observation.**
-Claude writes a request once per content block while streaming, with
-`output_tokens` rising. Those are partial snapshots of one fact, not
-disagreeing evidence. The source's counting rule (D6) keeps the final
-snapshot as the observation.
+**Link state is derived, never stored:**
+
+| State | Holds when |
+|---|---|
+| `primary` | the observation is some usage event's `accounting_observation_id` |
+| `linked` | it appears in `event_observations` as a `supporting` row |
+| `orphan` | a secondary observation that is neither |
+
+`doctor` and `collector_status` count orphans by query.
+
+**Incremental observations.** A source's representation of one request may
+evolve: Claude writes a request once per content block while streaming,
+with `output_tokens` rising. Those are partial snapshots of one fact, not
+disagreeing evidence. A new source record whose `(source, stream_key,
+source_request_key)` already exists **updates that observation** under the
+source's counting rule (D6), e.g. the later, more complete snapshot
+advances `output_tokens`. If the observation is some event's accounting
+observation, that event is then updated in place; its `usage_id` doesn't
+change. This holds for any source whose record of a request evolves.
 
 ### Usage event (canonical) [F]
 
 What usage-watch **counts** for one request:
 - `usage_id`: surrogate integer;
+- `accounting_observation_id`: NOT NULL and UNIQUE, referencing
+  `usage_observations`. **One primary observation permanently corresponds
+  to one canonical usage event**, and the accounting link lives here, not
+  in `event_observations`;
+- `observed_at` and `session_key`: copied from the accounting observation
+  when the event is created, stored, and **immutable**. Attribution
+  resolution uses them;
 - the token fields and `auxiliary`, taken **atomically from the single
   accounting observation**: as one unit, never mixed field by field with
   another observation's;
+- `reconciled_version`: integer, the reconciliation rule version last
+  applied;
 - `disagreement`: null when every linked observation agreed, otherwise the
   largest per-field difference across **all** linked `supporting`
   observations, e.g. transcript 12,400 versus OTel 12,402;
@@ -169,24 +199,26 @@ What usage-watch **counts** for one request:
   `auth_mode` gives session-level evidence (D2). With no evidence it is
   `unknown`. Claude and omp are open, see the plan.
 
-**Link to observations:** `event_observations(usage_id, observation_id,
-role, field)`. `field` is never null: the field name for a `metadata` row,
-`''` otherwise.
+**Other links to observations:** `event_observations(usage_id,
+observation_id, role, field)`. `field` is NOT NULL: the field name for a
+`metadata` row, `''` for a `supporting` row.
 
-| Role | Meaning |
-|---|---|
-| `accounting` | exactly one per event: the primary observation the token fields come from |
-| `supporting` | a linked observation from another source, kept as evidence |
-| `metadata` | supplied one named request-level metadata field the accounting observation lacks; the field name is recorded |
+| Role | Meaning | Cardinality |
+|---|---|---|
+| `supporting` | a linked observation from another source, kept as evidence | a secondary observation supports **at most one** event |
+| `metadata` | supplied one named request-level metadata field the accounting observation lacks; the field name is recorded | **one** metadata source per event and field |
+
+There is no `accounting` role: that link is
+`usage_events.accounting_observation_id`.
 
 **Primary, secondary, unlinked:**
 - For each harness, **one source is primary for counting**: its session
   log (`claude.transcript`, `codex.rollout`, `omp.session`). OTel stays a
   preferred telemetry source for other facts, but is **secondary for
   counting**.
-- A **primary observation** creates, or is, the canonical counting event,
-  and is its `accounting` link.
-- A **linked secondary observation** (shares a provider request ID with a
+- A **primary observation** creates the canonical counting event, and is
+  its `accounting_observation_id`, for as long as both exist.
+- A **linked secondary observation** (same `provider_request_key` as a
   primary one, e.g. Claude `requestId` = OTel `request_id`) is
   `supporting` evidence. Differences go into `disagreement`.
 - An **unlinked secondary observation** is stored as evidence and **never
@@ -202,9 +234,13 @@ role, field)`. `field` is never null: the field name for a `metadata` row,
   coverage gap. A secondary source is never promoted automatically;
   promotion is an explicit per-harness config choice.
 
-Reconciliation rules are versioned. Re-running them over stored
-observations rebuilds usage events and their links without losing
-evidence.
+**Reconciliation updates events in place, never rebuilds them.** It may
+update an event's token fields (from its accounting observation), its
+`supporting` and `metadata` links, and its `disagreement`. It never
+replaces or re-creates a `usage_id`, and never changes an event's
+`accounting_observation_id`, `observed_at` or `session_key`. Rules are
+versioned: an event whose `reconciled_version` is below the current
+version is reprocessed in place, without losing evidence.
 
 ### Attribution evidence [F]
 
@@ -216,29 +252,38 @@ Table `attribution_evidence`. Every piece of evidence is kept:
   `project`, `branch`, `worktree`, `pane`, `role`, `task`;
 - `value`, `method`, `source`, `confidence`;
 - `validity`: `historical`, `live` or `time_bounded` (D2);
-- `valid_from`, `valid_to`: both nullable, the span in which the evidence
-  holds. For `live` evidence, `valid_from = first_observed_at` and
+- `valid_from`, `valid_to`: the span in which the evidence holds.
+  `valid_from` is NOT NULL, with `0` meaning "unbounded start"; `valid_to`
+  is nullable (open end) and not part of the identity. For `live`
+  evidence, `valid_from = first_observed_at` and
   `valid_to = last_confirmed_at`, closed when no longer confirmed;
 - `first_observed_at`, `last_confirmed_at`.
 
 **Identity:** `(subject_kind, subject_id, dimension, method, value,
-valid_from)`. Seeing the same evidence again updates `last_confirmed_at`,
+valid_from)`, all NOT NULL. Seeing the same evidence again updates `last_confirmed_at`,
 and adds no row. A new value from the same method is a new row, and the
 previous row's `valid_to` is closed.
 
 ### Effective attribution [F]
 
-Table `effective_attributions`: **exactly one row per `(subject_kind,
-subject_id, dimension)` for a subject with its own evidence** for that
-dimension, recomputed whenever the evidence changes. Inherited values
-(below) are computed at query time, not stored.
+Table `effective_attributions`: **at most one row per `(subject_kind,
+subject_id, dimension)`**. A row exists only:
+- for a subject with its own evidence for that dimension, recomputed
+  whenever the evidence changes; or
+- after an attribution attempt that found **zero evidence**: `state =
+  unattributed`, `value` null, `evidence_id` null, and `note` the reason
+  (D2).
+
+Inherited values (below) are computed at query time, not stored.
 - `state`: `attributed`, `ambiguous` or `unattributed`;
 - `value`: set only when `attributed`;
-- `confidence` and `evidence_id`: what the row rests on.
+- `confidence` and `evidence_id`: what the row rests on, null when there
+  is no evidence;
+- `note`: why, when `unattributed` or `ambiguous`.
 
 **Resolution rule:**
 1. Only evidence valid at the subject's time counts: for a usage event,
-   its `observed_at`; for a session, its span; for a capacity sample or
+   its stored `observed_at`; for a session, its span; for a capacity sample or
    limit event, its `observed_at`.
 2. Take the highest confidence present (`authoritative` > `observed` >
    `inferred`).
@@ -248,7 +293,8 @@ dimension, recomputed whenever the evidence changes. Inherited values
 5. No evidence means `unattributed`.
 
 **Inheritance:** a usage event's effective attribution for a dimension is
-its own if it has any evidence for that dimension, else its session's.
+its own if it has any evidence for that dimension, else that of the
+session named by its stored `session_key`.
 Most dimensions attach to the session; a usage event has its own evidence
 only where it differs, e.g. a branch recorded per request.
 
@@ -263,10 +309,11 @@ never make an event appear twice.
 | `scope_kind`, `scope_id` | `request` (a `usage_id`) or `session` (a `session_key`) |
 | `source` | who produced the figure |
 | `basis` | `actual_billed` (a real bill), `harness_estimate` (the harness's own figure), or `list_price` (usage-watch: tokens × a public price table) |
-| `price_version` | for `list_price`: the table's version and entry |
+| `price_version` | NOT NULL. For `list_price`: the table's version and entry; `''` for other bases |
 | `cost_usd_micros` | the amount |
 
-**Identity:** `(scope_kind, scope_id, source, basis, price_version)`.
+**Identity:** `(scope_kind, scope_id, source, basis, price_version)`, all
+NOT NULL.
 Revised estimates sit alongside older ones. Views use the newest
 `price_version` unless asked otherwise.
 
@@ -307,7 +354,10 @@ model.
     process during this collection pass, D2);
   - its attribution evidence and effective attributions.
 - **Checkout and repository:** D2.
-- **Account and aliases:** D7.
+- **Account, aliases and merges:** D7; schema in D3. `account_key` is a
+  random opaque local ID, generated when the account is created and never
+  derived from an alias. The canonical account is found by following
+  unrevoked merges.
 - **Pane:** a live tmux fact only, never an entity.
 
 ## Invariants [F]
@@ -334,6 +384,12 @@ formats.
 8. **Nothing unknown becomes zero**, per the null arithmetic above.
 9. **Unlinked secondary observations never affect canonical usage
    totals.**
+10. **One primary observation maps to at most one canonical usage event.**
+11. **One canonical usage event has exactly one accounting observation.**
+12. **Reconciliation never changes the identity of an existing canonical
+    event.** It updates in place; `usage_id` is never replaced.
+13. **Every declared persistence identity is enforceable under SQLite
+    semantics:** no identity column is nullable (D3).
 
 ## Not in the model
 

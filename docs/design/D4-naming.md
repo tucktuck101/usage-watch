@@ -1,6 +1,6 @@
 # D4: Naming, mapping and cardinality
 
-Status: draft, revised after second review (2026-10-01). Rests on
+Status: draft, revised after third review (2026-10-01). Rests on
 [R4](../research/R4-otel-genai-conventions.md),
 [R1 and its live capture](../research/R1-native-otel.md#live-capture-2026-10-01),
 [R2](../research/R2-local-token-records.md), [R6](../research/R6-joins.md),
@@ -51,21 +51,35 @@ the source file path (pull) or the trace ID (push, OTLP).
 
 | D1 field | Claude transcript | Claude OTel | Codex rollout | Codex OTel | omp session | omp OTel |
 |---|---|---|---|---|---|---|
-| record | `type:"assistant"` lines, `message.usage` | metric `claude_code.token.usage`; event `claude_code.api_request` | `event_msg` with `payload.type:"token_count"` | metric `codex.turn.token_usage`; log `codex.sse_event`; span `session_task.turn` | `type:"message"`, `message.role:"assistant"`, `message.usage` | metric `gen_ai.client.token.usage`; span `chat <model>` |
+| record | `type:"assistant"` lines, `message.usage` | event `claude_code.api_request` only | `event_msg` with `payload.type:"token_count"` | log `codex.sse_event` or span `session_task.turn` with `turn.id` (which one: to confirm from a recorded sample) | `type:"message"`, `message.role:"assistant"`, `message.usage` | span `chat <model>` with `gen_ai.response.id` only |
 | `uncached_input_tokens` | `input_tokens` | `input_tokens` / `type=input` | `input_tokens − cached_input_tokens` (assumes input includes cached, per OpenAI convention: **verify**) | `non_cached_input` | `input` | `type=input` (whether it includes cache reads: **verify per version**) |
 | `cache_read_input_tokens` | `cache_read_input_tokens` | `cache_read_tokens` / `cacheRead` | `cached_input_tokens` | `cached_input` | `cacheRead` | `cache_read_input` |
 | `cache_write_input_tokens` | `cache_creation_input_tokens` | `cache_creation_tokens` / `cacheCreation` | `cache_write_input_tokens` | `cache_write_input` | `cacheWrite` | `cache_write_input` |
 | `output_tokens` | `output_tokens` | `output_tokens` | `output_tokens` | `output` | `output` | `output` |
 | `reasoning_output_tokens` | `output_tokens_details.thinking_tokens` | none | `reasoning_output_tokens` | `reasoning_output` | `reasoningTokens` | `reasoning_output` |
 | `session_id` (feeds `session_key`) | `sessionId` | `session.id` | `session_meta.payload.id` | `conversation.id` (logs and spans; **not on metrics**) | session header `id` | `gen_ai.conversation.id` (spans; logs join through their trace ID) |
-| `source_request_key` | `message.id` + `requestId` | `request_id` | the `token_count` event's timestamp + its `total_token_usage.total_tokens` (D6) | `turn.id` | the entry's `id` (uniqueness per session: confirm from a recorded sample before C2); `responseId` kept as the provider response ID (null on 608 records, R2) | `gen_ai.response.id` (seen in R1's live capture) |
+| `source_request_key` | `message.id` + `requestId` | `request_id` | the `token_count` event's timestamp + its `total_token_usage.total_tokens` (D6) | `turn.id` | the entry's `id` (uniqueness per session: confirm from a recorded sample before C2) | `gen_ai.response.id` (seen in R1's live capture) |
+| `provider_request_key` (keyed hash, D5 namespace `request:<provider>`; the only cross-source link, D6) | `requestId` | `request_id` | none | none: Codex can't link by request (D6) | `responseId` (null on 608 records, R2), **only after equality with omp OTel `gen_ai.response.id` is verified** | `gen_ai.response.id`, **only after equality with omp session `responseId` is verified** |
 | `model` | `message.model` (`<synthetic>` is skipped) | `model` | the preceding `turn_context.payload.model` | `model` | `message.model` | `gen_ai.request.model` |
 | `provider` | no field: to confirm from a recorded sample | no field: to confirm from a recorded sample | no field: to confirm from a recorded sample | no field: to confirm from a recorded sample | `message.provider` | `gen_ai.provider.name` |
 | `auxiliary` | to confirm from a recorded sample | to confirm from a recorded sample (`query_source` is a candidate, unverified) | to confirm from a recorded sample | to confirm from a recorded sample | to confirm from a recorded sample | to confirm from a recorded sample (`omp.gen_ai.agent.id` / `omp.gen_ai.agent.name` are candidates, unverified; judgment-model spans exist, R1) |
 | `observed_at` | to confirm from a recorded sample | the OTLP record's time: to confirm from a recorded sample | to confirm from a recorded sample | the OTLP record's time: to confirm from a recorded sample | to confirm from a recorded sample | the OTLP record's time: to confirm from a recorded sample |
-| harness cost (D1 cost event, `harness_estimate`) | none | `cost_usd` on `api_request`, plus undocumented `cost_usd_micros`; metric `claude_code.cost.usage` | none | `codex.turn.cost_microusd` (not emitted on a ChatGPT-login run) | `cost.total` (also `cost{input, output, cacheRead, cacheWrite}`, kept in `native` only) | `omp.agent.chat.cost.estimated_usd`; span `gen_ai.cost.*_usd` (0 on a subscription run) |
+| harness cost (D1 cost event, `harness_estimate`) | none | `cost_usd` on `api_request`, plus undocumented `cost_usd_micros` | none | `codex.turn.cost_microusd` (not emitted on a ChatGPT-login run) | `cost.total` (also `cost{input, output, cacheRead, cacheWrite}`, kept in `native` only) | span `gen_ai.cost.*_usd` (0 on a subscription run). Cost **metrics** (`claude_code.cost.usage`, `omp.agent.chat.cost.estimated_usd`) have no request or session identity, so, like token metrics, they never become cost events |
 | billing-route evidence | none: `unknown` | none: `unknown` | none: `unknown` | `auth_mode`: session-level evidence (table 5), not per request | none: `unknown` | none: `unknown` |
 
+- **OTel metrics are not observations [needed before C3].** An OTLP datum
+  emits a usage observation only if it yields both a `stream_key` and a
+  `source_request_key`. The aggregate token metrics
+  `claude_code.token.usage`, `codex.turn.token_usage` and
+  `gen_ai.client.token.usage` carry no request identity, so they never
+  become usage observations. They may be kept later as aggregate
+  telemetry; until a table for that is added, they are dropped on arrival.
+  The per-column token-field names above that come from those metrics
+  (`type=input`, `token_type` values) apply only where the same names
+  appear on the keyed event or span; where they don't, the keyed record's
+  own field names are to confirm from a recorded sample.
+- `provider_request_key` is null where the source has no provider request
+  ID, or where the table says the link is not yet verified.
 - `native` (D1) keeps the numeric token fields named in this table for the
   source, and nothing else.
 - Claude's cache-write figure is split into 5 m and 1 h, and omp's has a

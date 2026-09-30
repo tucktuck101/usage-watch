@@ -1,6 +1,6 @@
 # D6: Collectors and reconciliation
 
-Status: draft, revised after second review (2026-10-01). Rests on
+Status: draft, revised after third review (2026-10-01). Rests on
 [R1](../research/R1-native-otel.md), [R2](../research/R2-local-token-records.md),
 [R9](../research/R9-credential-free-limits.md),
 [R10](../research/R10-omp-extension-limits.md). Scope markers as in
@@ -22,6 +22,13 @@ Status: draft, revised after second review (2026-10-01). Rests on
      usage events;
   4. update attribution evidence and effective attributions (D2);
   5. update `collector_status`.
+- **Incremental observations.** A new source record whose
+  `(source, stream_key, source_request_key)` already exists updates that
+  observation, by the source's counting rule (below); it is not a new
+  observation. If it is a primary observation, its canonical usage event
+  is then updated in place. This applies to any source whose
+  representation of a request evolves, e.g. Claude's later, more complete
+  streaming snapshot of the same request.
 - A source that fails is reported in `collector_status` and retried. It
   never stops the others.
 - **No source makes an outbound network call.** The OTLP receiver listens
@@ -41,7 +48,7 @@ Status: draft, revised after second review (2026-10-01). Rests on
 
 | Source | Contract | Reads | Gives | Confidence | Counting rule |
 |---|---|---|---|---|---|
-| `claude.transcript` [F] | pull, tail | `~/.claude/projects/**/*.jsonl` | observations, sessions, limit events | authoritative | **Primary** for Claude Code. Within the source, collapse on `(message.id, requestId)`, keeping the **final** snapshot (largest `output_tokens`). Skip `<synthetic>`. Subagent files are their own sessions |
+| `claude.transcript` [F] | pull, tail | `~/.claude/projects/**/*.jsonl` | observations, sessions, limit events | authoritative | **Primary** for Claude Code. Within the source, collapse on `(message.id, requestId)`, keeping the **final** snapshot (largest `output_tokens`): a later, more complete snapshot advances the existing observation (incremental observations, above). Skip `<synthetic>`. Subagent files are their own sessions |
 | `codex.rollout` [F] | pull, tail | `~/.codex/sessions/**/*.jsonl` | observations, sessions, **anchors** (`rate_limits`) | authoritative | **Primary** for Codex. Per session, the change in `total_token_usage`. Skip unchanged repeats. A decrease starts a new baseline. The model comes from the preceding `turn_context` |
 | `omp.session` [F] | pull, tail | `~/.omp/agent/sessions/**/*.jsonl` | observations (with `auxiliary`), harness cost, sessions, `credentialId` | authoritative | **Primary** for omp. Collapse on the entry `id` |
 | `omp.usage_cache` [F] | pull, 60 s | `agent.db` `cache`, `usage_cache:report:*` values only | anchors for every omp login | observed | Ignore entries by age, not by status. Hash identity on read |
@@ -91,14 +98,32 @@ primary for counting: `claude.transcript`, `codex.rollout`, `omp.session`.
 OTel is a preferred telemetry source for other facts, but **secondary for
 counting**. The source's own key prevents double counting within it.
 
+**Linking is only through `provider_request_key`** (D4: a keyed hash, D5
+namespace `request:<provider>`, of the provider's request ID). A secondary
+observation links to a primary one only when both carry the same non-null
+`provider_request_key`. Observation identity stays
+`(source, stream_key, source_request_key)`.
+
+**Event identity is stable.** One primary observation permanently
+corresponds to one canonical usage event. The accounting link is
+`usage_events.accounting_observation_id` (NOT NULL, UNIQUE); it is not a
+row in `event_observations`. Reconciliation updates events in place and
+never rebuilds or replaces a `usage_id`.
+
 | Observation | What happens | Counts? |
 |---|---|---|
-| **Primary** | Creates, or is, the canonical usage event (`usage_id`). Linked with role `accounting`, exactly one per event; `link_state` `primary` | yes, exactly once per distinct primary key |
-| **Linked secondary** (shares a provider request ID with a primary observation, e.g. Claude transcript `requestId` = Claude OTel `request_id`) | Linked with role `supporting`; `link_state` `linked`. Where its values differ, the event records `disagreement` | no |
-| **Unlinked secondary** | Stored as evidence, `link_state` `orphan`. Links later if a matching primary observation arrives | **never** |
+| **Primary** | Creates its canonical usage event (`usage_id`) the first time it is seen, with `accounting_observation_id` pointing at it; later versions of it update that event in place | yes, exactly once per distinct primary key |
+| **Linked secondary** (same `provider_request_key` as a primary observation, e.g. Claude transcript `requestId` = Claude OTel `request_id`) | An `event_observations` row with role `supporting`. Where its values differ, the event records `disagreement` | no |
+| **Unlinked secondary** | Stored as evidence, with no `event_observations` row. Links later if a primary observation with the same `provider_request_key` arrives | **never** |
 
+- **`link_state` is derived, not stored.** An observation is `primary` if
+  it is some event's `accounting_observation_id`, `linked` if it has an
+  `event_observations` row, and `orphan` otherwise. It is answered by
+  query.
+- **`event_observations.role`** is `supporting` or `metadata` only. A
+  secondary observation supports at most one event.
 - **Token accounting is atomic.** The event's token fields come from its
-  single `accounting` observation, as one unit. They're never mixed with
+  single accounting observation, as one unit. They're never mixed with
   another observation's, and never taken from a `supporting` or `metadata`
   observation.
 - **Metadata from a linked observation.** A request-level metadata field
@@ -106,7 +131,8 @@ counting**. The source's own key prevents double counting within it.
   when a source has one. The event records which one, with role
   `metadata` and the field name.
 - **Codex OTel never links by request:** the rollout has no request ID
-  (R2), so every Codex OTel observation is an orphan. Its `auth_mode` is
+  (R2), so neither side has a `provider_request_key` and every Codex OTel
+  observation is an orphan. Its `auth_mode` is
   used as **session-level** `billing_route` evidence instead, linked by
   `conversation.id` = `session_id` (D2), and usage events inherit it.
 - **Disagreement:** the largest per-field difference between the
@@ -114,14 +140,16 @@ counting**. The source's own key prevents double counting within it.
   disagreements appear per source pair, which is an early sign of parser
   drift.
 - **Orphans:** the number of unlinked secondary observations per source is
-  shown in `doctor` and in `collector_status`.
+  shown in `doctor` and in `collector_status`, counted by query.
 - **No readable primary source, no count.** A harness whose primary source
   is unavailable (e.g. OTel arrives but no session log is readable) is
   **not counted**. It's reported as a **coverage gap**. A secondary source
   is never promoted automatically. Promoting one to primary is an explicit
   config choice, per harness.
-- **Versioning:** reconciliation rules have a version. Re-running them over
-  stored observations rebuilds events.
+- **Versioning:** reconciliation rules have a version, recorded per event
+  as `usage_events.reconciled_version`. Events below the current version
+  are reprocessed in place from their stored observations; their
+  `usage_id` is kept.
 - **What reconciliation never does:** merge observations it can't prove
   are the same request.
 
@@ -174,4 +202,5 @@ silently treated as current.
 1. **omp link.** omp session entries carry `responseId` (608 null, R2),
    and omp OTel spans carry `gen_ai.response.id` (R1). Whether the two
    hold the same value, so the spans can link, is to confirm from a
-   recorded sample.
+   recorded sample. Until then neither sets `provider_request_key` (D4),
+   and every omp OTel observation is an orphan.

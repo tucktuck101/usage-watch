@@ -1,6 +1,6 @@
 # D2: Joins and attribution
 
-Status: draft, revised after second review (2026-10-01). Rests on
+Status: draft, revised after third review (2026-10-01). Rests on
 [R6](../research/R6-joins.md), [R7](../research/R7-logins-and-accounts.md),
 [R1's live capture](../research/R1-native-otel.md#live-capture-2026-10-01).
 Scope markers as in [D1](D1-model.md).
@@ -43,17 +43,24 @@ with the reason noted.
 
 ## Effective attribution [F]
 
-Table `effective_attributions`: exactly one row per
-`(subject_kind, subject_id, dimension)` for a subject with its own
-evidence for that dimension, recomputed whenever that subject's evidence
-changes. Inherited values are computed at query time. It holds a `state` (`attributed`, `ambiguous`
-or `unattributed`), a `value` (set only when `attributed`), and the
-`confidence` and `evidence_id` it rests on.
+Table `effective_attributions`: at most one row per
+`(subject_kind, subject_id, dimension)`. A row exists for a subject with
+its own evidence for that dimension, or after an attribution attempt for
+that subject and dimension that found no evidence (see
+[A failed join](#a-failed-join-f)). It is recomputed whenever that
+subject's evidence changes. Inherited values are computed at query time.
+It holds a `state` (`attributed`, `ambiguous` or `unattributed`), a
+`value` (set only when `attributed`), the `confidence` and `evidence_id`
+it rests on, and a `note`.
+
+**A usage event's time and session** are `usage_events.observed_at` and
+`usage_events.session_key`. Both are copied from the event's accounting
+observation when the event is created, and never change.
 
 **Resolution rule:**
 1. Only evidence valid at the subject's time counts: for a usage event,
-   its `observed_at`; for a session, its span; for a capacity sample or
-   limit event, its `observed_at`.
+   `usage_events.observed_at`; for a session, its span; for a capacity
+   sample or limit event, its `observed_at`.
 2. Take the highest confidence present (`authoritative` > `observed` >
    `inferred`).
 3. If every value at that confidence agrees, the state is `attributed`.
@@ -62,7 +69,8 @@ or `unattributed`), a `value` (set only when `attributed`), and the
 5. No evidence means `unattributed`.
 
 **Inheritance:** a usage event's effective attribution for a dimension is
-its own, if it has any evidence for that dimension, else its session's.
+its own, if it has any evidence for that dimension, else that of the
+session named by `usage_events.session_key`.
 
 **Totals:** each usage event counts **once**, under its single effective
 value, or under `ambiguous` or `unattributed`. Conflicting authoritative
@@ -95,9 +103,14 @@ without one keeps `session_key = null`, and is counted.
 ### Session to checkout and repository [F]
 
 From the session's `cwd` (on the record: `historical`), through git.
-- The git lookup is `live` if the directory no longer exists or has
-  changed repository. In that case, backfill gets `checkout_id` from the
-  path hash only, marked `inferred`.
+- **Backfill [needed before C4, not F1]:** a historical checkout identity
+  is never manufactured from current state. If it can't be established
+  for the session's time (the directory has moved, no longer exists, or
+  now belongs to a different repository), `checkout` is `unattributed`,
+  with a `note` giving the reason. There is no path-hash fallback.
+- The historical `cwd` and the display label are kept separately, as the
+  session's `cwd` field and its `project` display label. Neither is a
+  checkout identity.
 
 ### Branch [F]
 
@@ -184,8 +197,11 @@ events inherit it. Claude and omp have no source yet, so theirs is
 
 ## A failed join [F]
 
-No evidence is recorded, the effective attribution is `unattributed`, and
-a `note` on the `effective_attributions` row (state `unattributed` or `ambiguous`) records why, e.g. `backfill-live-only`, `no-session-id`,
-`pane-closed`, `account-unknown:codex-no-otel`. Views show the
+No evidence is recorded. An attribution attempt that finds no evidence
+writes an `effective_attributions` row with `state = unattributed`,
+`value = null`, `evidence_id = null`, and `note` = the reason, e.g.
+`backfill-live-only`, `no-session-id`, `pane-closed`,
+`account-unknown:codex-no-otel`, `checkout-not-established`. An
+`ambiguous` row also carries a `note`. Views show the
 `unattributed` and `ambiguous` shares as their own lines. Invariant 1 in
 D1 makes the shares add up.
