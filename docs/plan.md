@@ -70,7 +70,7 @@ Each phase depends on the ones before it unless a row says otherwise.
 | # | Task | Done when | Status |
 |---|---|---|---|
 | 0.1 | Endpoint check: Claude and Codex usage APIs, read-only, printing no tokens | Response shapes are recorded under `docs/research/`, or the endpoints are ruled out | done: [finding](research/0.1-endpoint-check.md). Personal Claude and Codex answer directly; the team-plan token was throttled (429) |
-| 0.2 | Decide what happens to `openusage`: optional backend, or removed | Decision recorded below | open: 0.1 suggests optional, not removed, until the team-plan path works |
+| 0.2 | Decide what happens to `openusage`: optional backend, or removed | Decision recorded below | done: removed, as part of C1 (see Decisions) |
 | 0.3 | Swap the old scratchpad watcher for the installed `usage-watch run` | One watcher running | owner action |
 | 0.4 | Record real Claude and Codex stall screens as fixtures | Those adapters no longer rely on made-up screens | waits for a real stall |
 
@@ -117,7 +117,7 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Native capacity, read-only, for every account discovered (D7): Claude and Codex logins from every home, omp `usage_history`, polling within the budget | 0.1, 0.2, D7 |
+| C1 | Native capacity, read-only, for every account discovered (D7): Claude and Codex logins from every home, omp `usage_history`, polling within the budget. Removes the `openusage` backend in the same change | 0.1, 0.2, D7 |
 | C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
 | C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
@@ -176,10 +176,10 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Goal is every view listed; the proof of concept is the set in Scope |
 | 2026-09-30 | Credentials are read-only: never refreshed or written |
 | 2026-09-30 | Provider logic may be ported from OpenUsage (MIT) with its notice kept; its name and branding are not used |
+| 2026-09-30 | `openusage` is removed as a dependency, for maintainability. It comes out in the same change that lands C1's direct readers, so pools are never unreadable. Until then the team plan is read through omp's `usage_history` when its token is throttled |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
 ## Open questions
 
 - Whether the team-plan token answers the usage endpoint when not
   recently polled (see the 0.1 finding).
-- 0.2: whether `openusage` stays as an optional backend or goes.
