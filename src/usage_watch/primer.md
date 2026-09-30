@@ -9,8 +9,8 @@ When several agents run overnight or across projects, that wait is often the
 biggest delay in the work.
 
 usage-watch is the someone who types. It finds agents that stopped on a usage
-limit, waits until OpenUsage says the pool they draw on has refilled, and
-types `continue` into each one.
+limit, waits until the pool they draw on has refilled, and types `continue`
+into each one.
 
 ## How it works
 
@@ -23,8 +23,8 @@ Every scan (five minutes by default) does four things:
    new lanes and new projects are picked up automatically.
 2. **Detect.** A harness adapter reads each agent's screen and names its state.
 3. **Confirm.** For a stalled pane, it works out which subscription the pane
-   draws on (harness plus model family) and asks OpenUsage whether that pool
-   has capacity again.
+   draws on (harness plus model family) and checks whether that pool has
+   capacity again.
 4. **Nudge.** When it does, it types the nudge into the pane, presses Enter,
    and checks the pane started working.
 
@@ -62,7 +62,7 @@ does not yet), or **escalate** (something needs a person; see below).
 
 - It never types into a pane unless the adapter reads it as `stalled`.
 - It never types into an input box that already has text in it.
-- It never nudges before OpenUsage confirms the pool has capacity.
+- It never nudges before a capacity source confirms the pool has capacity.
 - It nudges each stall once. If the same stall is still there afterwards, or
   a pane keeps stalling while the pool shows capacity, it escalates instead
   of retrying: a log line starting `ESCALATE` and a desktop notification.
@@ -75,8 +75,10 @@ does not yet), or **escalate** (something needs a person; see below).
 
 - It only sees agents running inside tmux. It cannot see or type into plain
   terminal windows or IDE panels.
-- It only knows the pools OpenUsage reports. A pane whose provider OpenUsage
-  does not track escalates instead of being nudged.
+- It only knows the pools its capacity sources report. **In this version
+  there are none yet**: the direct readers for Claude and Codex arrive with
+  plan item C1 (`docs/plan.md`). Until then it finds and shows stalled
+  panes, but waits rather than nudging them.
 - The screen shows the model, not the account. With two accounts of the same
   family (say a personal and a team Claude plan), config must say which
   harness uses which. `usage-watch init` sets that up.

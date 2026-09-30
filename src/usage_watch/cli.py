@@ -11,6 +11,7 @@ from importlib import resources
 from . import __version__, config, screen, sh, watcher
 from .adapters import ADAPTERS
 from .errors import Problem
+from . import pool
 from .pool import Pools, now
 from .topology import scan
 
@@ -38,7 +39,7 @@ def cmd_primer(a) -> int:
         parts = re.split(r"(?m)^## ", text)
         keep = [p for p in parts[1:] if p.split("\n", 1)[0].strip() in AGENT_SECTIONS]
         text = ("# usage-watch, for agents\n\nusage-watch nudges AI agents in tmux that stopped on a usage "
-                "limit, once OpenUsage shows their pool has refilled.\n\n" + "".join("## " + p for p in keep))
+                "limit, once their pool has refilled.\n\n" + "".join("## " + p for p in keep))
     print(text.rstrip())
     return 0
 
@@ -99,7 +100,6 @@ def cmd_doctor(a) -> int:
         checks.append(("ok " if ok else ("-- " if ok is None else "!! ")) + f"{name}: {detail}")
 
     check("tmux", bool(sh.which("tmux")), sh.which("tmux") or "not found; install tmux")
-    check("openusage", bool(sh.which("openusage")), sh.which("openusage") or "not found; install OpenUsage")
     check("workmux", True if sh.which("workmux") else None,
           sh.which("workmux") or "not found (optional; lanes are inferred from git worktrees)")
     cfg = config.load()
@@ -107,7 +107,10 @@ def cmd_doctor(a) -> int:
     pools = Pools()
     try:
         ids = sorted(pools.providers())
-        check("pools", bool(ids), ", ".join(ids) or "openusage reports no providers")
+        if not pool.SOURCES:
+            check("pools", None, "no capacity source yet (plan item C1); stalled panes will wait, not be nudged")
+            raise StopIteration
+        check("pools", bool(ids), ", ".join(ids) or "no providers found")
         for e in pools.errors():
             check(f"pool {e.get('providerId')}", None, e.get("message", "error"))
         for harness, families in FAMILIES.items():
@@ -116,6 +119,8 @@ def cmd_doctor(a) -> int:
                     check(f"account {harness}/{family}", True, pools.resolve(harness, family, cfg.accounts))
                 except Problem as p:
                     check(f"account {harness}/{family}", None, p.what)
+    except StopIteration:
+        pass
     except Problem as p:
         check("pools", False, p.what)
     for ad in ADAPTERS:
@@ -142,7 +147,7 @@ def cmd_init(a) -> int:
                           fix="rerun with the value in that form")
         given.setdefault(m[1], {})[m[2]] = m[3]
     providers = pools.providers()
-    print("OpenUsage reports:")
+    print("Accounts found:" if providers else "No accounts found yet (capacity sources arrive with plan item C1).")
     for pid, info in sorted(providers.items()):
         print(f"  {pid:24} {info.get('plan', ''):10} {info.get('displayName', '')}")
     accounts: dict = {}
@@ -265,7 +270,7 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_init)
 
     s = sub.add_parser("wait", help="block until a pool has capacity")
-    s.add_argument("--provider", help="openusage provider id")
+    s.add_argument("--provider", help="provider id, as `usage-watch doctor` lists it")
     s.add_argument("--pane", help="the pool this pane draws on")
     s.add_argument("--min", type=float, help="session %% required (default from config)")
     s.add_argument("--timeout", type=float, help="give up after this many seconds")

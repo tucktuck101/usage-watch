@@ -8,7 +8,7 @@ cannot show.
     min_remaining = 5       # session % a pool needs before a pane is nudged
     max_strikes = 3         # nudges that did not hold before escalating
 
-    [accounts.omp]          # openusage provider per harness and model family
+    [accounts.omp]          # provider id per harness and model family
     claude = "claude@1a2b3c4d"
     codex = "codex"
 

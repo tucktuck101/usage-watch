@@ -3,7 +3,7 @@
 A pane is nudged only when all of these hold:
   - its adapter reads it as `stalled` (never `unknown`, `typing` or `resuming`)
   - it is not ignored in config, and it is not a lane that already handed off
-  - the pool it draws on has capacity, per openusage
+  - the pool it draws on has capacity, per a capacity source (pool.SOURCES)
   - this stall has not been nudged already
 """
 
@@ -19,7 +19,7 @@ from . import screen, sh
 from .adapters import Reading
 from .config import Config, state_dir
 from .errors import Problem
-from .pool import Capacity, Pools
+from .pool import NO_SOURCE, Capacity, Pools
 from .topology import Pane, Topology, scan
 
 
@@ -80,7 +80,10 @@ def observe(topo: Topology, cfg: Config, pools: Pools, memory: Memory | None = N
             obs.provider = pools.resolve(pane.harness.name, pane.harness.family(reading.model), cfg.accounts)
             obs.capacity = pools.capacity(obs.provider, cfg.min_remaining, reading.model)
         except Problem as e:
-            obs.action, obs.reason = "escalate", e.render()
+            if e is NO_SOURCE:  # expected until capacity readers exist: wait, don't alarm
+                obs.action, obs.reason = "wait", e.what
+            else:
+                obs.action, obs.reason = "escalate", e.render()
             continue
         if not obs.capacity.ok:
             obs.action, obs.reason = "wait", obs.capacity.why

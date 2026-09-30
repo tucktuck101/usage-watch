@@ -1,4 +1,4 @@
-"""A fake machine: tmux panes, processes, git, workmux and openusage, all canned."""
+"""A fake machine: tmux panes, processes, git and workmux canned, plus a fake capacity source."""
 
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ from usage_watch import sh
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def openusage_json(team_session=92, team_weekly=81, reset="2026-09-30T09:00:00Z"):
+def usage_json(team_session=92, team_weekly=81, reset="2026-09-30T09:00:00Z"):
     c = {"kind": "consumption"}
     return json.dumps({
         "providers": {
@@ -28,7 +28,7 @@ class Machine:
     def __init__(self, tmp: Path, screens: dict, usage: str | None = None):
         self.tmp = tmp
         self.screens = dict(screens)      # pane id -> fixture name
-        self.usage = usage or openusage_json()
+        self.usage = usage or usage_json()
         self.typed: list[tuple[str, str]] = []
         self.after_nudge: dict = {}    # pane id -> fixture shown after typing
         self.project = str(tmp / "proj")
@@ -42,6 +42,9 @@ class Machine:
         ("%3", 103, "project", "Claude"),
         ("%4", 104, "project", "zsh"),
     ]
+
+    def source(self, force=False):
+        return json.loads(self.usage)
 
     def cwd(self, key):
         return self.project if key == "project" else self.lane
@@ -79,8 +82,6 @@ class Machine:
             ]), "")
         if prog == "workmux" and cmd[1] == "status":
             return sh.Result(0, json.dumps([{"pane_id": "%2", "status": "done"}]), "")
-        if prog == "openusage":
-            return sh.Result(0, self.usage, "")
         if prog == "osascript":
             return sh.Result(0, "", "")
         raise AssertionError(f"unexpected command {cmd}")

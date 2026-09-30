@@ -13,6 +13,7 @@ import time
 
 from . import config, watcher
 from .errors import Problem
+from . import pool
 from .pool import Pools, parse_time
 from .topology import scan
 
@@ -53,6 +54,8 @@ def pool_lines(pools: Pools) -> list[tuple[str, int]]:
             label = head if i == 0 else " " * len(head)
             pct = f"{left:>3.0f}% left" if left is not None else "   ?"
             lines.append((f"{label}  {name:8} {bar(left)} {pct}  {when}", color))
+    if not pool.SOURCES:
+        lines.append(("no capacity source yet: readers arrive with plan item C1, until then panes wait", 5))
     for e in pools.errors():
         lines.append((f"{e.get('providerId', '?'):18} error: {e.get('message', '')}", 5))
     return lines

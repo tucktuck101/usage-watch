@@ -2,8 +2,13 @@
 
 AI coding agents stop when a subscription's usage limit runs out, and most of
 them stay stopped after it resets, until someone types. usage-watch finds
-those agents in tmux, waits until [OpenUsage](https://github.com/robinebers/openusage)
-shows their pool has refilled, and types `continue` for you.
+those agents in tmux, waits until their pool has refilled, and types
+`continue` for you.
+
+> **Current state.** Finding agents and reading their state works. Reading
+> pool capacity does not yet: the direct readers for Claude and Codex are
+> being built (plan item C1, [docs/plan.md](docs/plan.md)). Until they land,
+> stalled panes are shown and wait, but are not nudged.
 
 It works across every tmux session and every project at once. It finds
 Claude Code, Codex and omp panes by their process tree, and learns your
@@ -20,8 +25,8 @@ PANE   HARNESS  ROLE          MODEL     STATE    PROVIDER         POOL          
 
 ## Install
 
-It needs Python 3.11 or later, tmux, and the OpenUsage app with its
-`openusage` command. [workmux](https://workmux.dev) is optional: with it,
+It needs Python 3.11 or later and tmux, and runs on macOS and Linux.
+[workmux](https://workmux.dev) is optional: with it,
 lanes are named and a finished lane is never nudged.
 
 ```sh
@@ -41,8 +46,7 @@ tmux new-window -d -n usage-watch 'usage-watch run'
 Or watch it happen: `usage-watch dashboard --watch` shows each pool's limits
 and reset countdowns above every agent's state, refreshing as it goes.
 
-`init` only asks something when OpenUsage reports two accounts of the same
-family, for example a personal and a team Claude plan. The screen shows the
+`init` only asks something when it finds two accounts of the same family, for example a personal and a team Claude plan. The screen shows the
 model, not the account, so it has to be told which harness uses which.
 
 ## Commands
@@ -65,8 +69,8 @@ what was expected, and the fix.
 ## Safety
 
 It types into a pane only when all of these hold: the pane's adapter reads it
-as stalled on a usage limit, its input box is empty, OpenUsage confirms its
-pool has capacity, and that stall hasn't been nudged already. If a pane stays
+as stalled on a usage limit, its input box is empty, a capacity source
+confirms its pool has capacity, and that stall hasn't been nudged already. If a pane stays
 stuck, it escalates to you (a log line and a desktop notification) rather
 than retrying. When unsure it does nothing, because a missed nudge only costs
 a wait. `usage-watch primer` lists these guarantees in full.
@@ -96,7 +100,7 @@ interval = 300        # seconds between scans
 min_remaining = 5     # session % needed before nudging
 max_strikes = 3       # failed nudges before escalating
 
-[accounts.omp]        # openusage provider per harness and model family
+[accounts.omp]        # provider id per harness and model family
 claude = "claude@1a2b3c4d"
 
 [roles.orchestrator]  # nudge text per role: lane, orchestrator, standalone

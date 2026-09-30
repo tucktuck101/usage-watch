@@ -3,12 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from usage_watch import cli, config, sh, watcher
+from usage_watch import cli, config, pool, sh, watcher
 from usage_watch.errors import Problem
 from usage_watch.pool import Pools
 from usage_watch.topology import scan
 
-from fakes import Machine, openusage_json
+from fakes import Machine, usage_json
 
 ACCOUNTS = {"omp": {"claude": "claude@team"}, "claude": {"claude": "claude"}}
 
@@ -18,6 +18,7 @@ def machine(tmp_path, monkeypatch):
     def make(screens, usage=None, accounts=ACCOUNTS, overrides=()):
         m = Machine(tmp_path, screens, usage)
         monkeypatch.setattr(sh, "run", m)
+        monkeypatch.setattr(pool, "SOURCES", [m.source])
         monkeypatch.setattr(sh, "which", lambda name: f"/usr/bin/{name}")
         monkeypatch.setattr(watcher.time, "sleep", lambda s: None)
         monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
@@ -74,14 +75,14 @@ def test_repeated_restalls_escalate_until_the_pane_works(machine):
 
 
 def test_no_capacity_means_wait(machine):
-    m = machine(screens(p1="omp_stalled_plain"), usage=openusage_json(team_session=0))
+    m = machine(screens(p1="omp_stalled_plain"), usage=usage_json(team_session=0))
     o = run_scan(m)["%1"]
     assert o.action == "wait" and "session 0% left" in o.reason
     assert m.typed == []
 
 
 def test_weekly_exhausted_means_wait(machine):
-    m = machine(screens(p1="omp_stalled_plain"), usage=openusage_json(team_weekly=0))
+    m = machine(screens(p1="omp_stalled_plain"), usage=usage_json(team_weekly=0))
     assert run_scan(m)["%1"].action == "wait"
 
 
@@ -169,3 +170,11 @@ def test_nudge_command_refuses_busy_pane_with_a_fix(machine, capsys, monkeypatch
     assert cli.main(["nudge", "%2"]) == 1
     err = capsys.readouterr().err
     assert "%2 is busy" in err and "fix:" in err
+
+
+def test_without_a_capacity_source_stalled_panes_wait_quietly(machine, monkeypatch):
+    m = machine(screens(p1="omp_stalled_plain"))
+    monkeypatch.setattr(pool, "SOURCES", [])
+    o = run_scan(m)["%1"]
+    assert o.action == "wait" and "no capacity source" in o.reason
+    assert m.typed == []

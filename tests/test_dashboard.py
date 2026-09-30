@@ -1,9 +1,9 @@
 import json
 
-from usage_watch import dashboard, sh
+from usage_watch import dashboard, pool
 from usage_watch.pool import Pools
 
-from fakes import openusage_json
+from fakes import usage_json
 
 
 def test_bar_and_until():
@@ -13,9 +13,9 @@ def test_bar_and_until():
 
 
 def test_pool_lines_show_every_window_and_errors(monkeypatch):
-    data = json.loads(openusage_json(team_session=3))
+    data = json.loads(usage_json(team_session=3))
     data["errors"] = [{"providerId": "openrouter", "message": "key invalid"}]
-    monkeypatch.setattr(sh, "run", lambda cmd, **kw: sh.Result(0, json.dumps(data), ""))
+    monkeypatch.setattr(pool, "SOURCES", [lambda force: data])
     lines = dashboard.pool_lines(Pools())
     text = "\n".join(t for t, _ in lines)
     assert "claude@team" in text and "fable" in text and "codex" in text

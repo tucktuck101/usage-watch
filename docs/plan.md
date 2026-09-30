@@ -70,7 +70,7 @@ Each phase depends on the ones before it unless a row says otherwise.
 | # | Task | Done when | Status |
 |---|---|---|---|
 | 0.1 | Endpoint check: Claude and Codex usage APIs, read-only, printing no tokens | Response shapes are recorded under `docs/research/`, or the endpoints are ruled out | done: [finding](research/0.1-endpoint-check.md). Personal Claude and Codex answer directly; the team-plan token was throttled (429) |
-| 0.2 | Decide what happens to `openusage`: optional backend, or removed | Decision recorded below | done: removed, as part of C1 (see Decisions) |
+| 0.2 | Decide what happens to `openusage`: optional backend, or removed | Decision recorded below | done: removed (see Decisions) |
 | 0.3 | Swap the old scratchpad watcher for the installed `usage-watch run` | One watcher running | owner action |
 | 0.4 | Record real Claude and Codex stall screens as fixtures | Those adapters no longer rely on made-up screens | waits for a real stall |
 
@@ -88,6 +88,7 @@ evidence. A question with no evidence stays open.
 | R5 | Where does pricing data come from? OpenUsage references LiteLLM's public model-price table | Cost estimates |
 | R6 | How can a usage record be joined to a pane or project: session ID to process to pane, or cwd in logs? | The joins that are the product's value |
 | R7 | Where does each harness keep its logins, and how can a pane's account be told? Known leads: Claude's default home and `CLAUDE_CONFIG_DIR` homes (Keychain entry suffixed by a hash of the directory), Claude Swap's saved accounts, Claude Desktop's organizations (macOS only); Codex's `CODEX_HOME`, `~/.codex`, `~/.config/codex` and sibling `-*` homes; omp's `auth_credentials` (several logins per provider, each with an identity key). Open: which login an omp pane is using at a given moment | Several subscriptions per provider, attributed correctly |
+| R8 | How does omp authenticate its accounts, and would usage-watch holding its own logins (the way omp does) be easier or more reliable than discovering the harnesses' logins? | May replace discovery in D7 and C1 |
 
 ### Phase 2: design
 
@@ -117,7 +118,7 @@ Written under `docs/design/` and agreed before building.
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Native capacity, read-only, for every account discovered (D7): Claude and Codex logins from every home, omp `usage_history`, polling within the budget. Removes the `openusage` backend in the same change | 0.1, 0.2, D7 |
+| C1 | Native capacity, read-only, for every account discovered (D7): Claude and Codex logins from every home, omp `usage_history`, polling within the budget. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7 |
 | C2 | Token usage from session logs (Claude, Codex, omp), with backfill | R2 |
 | C3 | Local OTLP receiver (OTLP over HTTP with JSON, standard library) | R1 |
 | C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
@@ -176,7 +177,7 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Goal is every view listed; the proof of concept is the set in Scope |
 | 2026-09-30 | Credentials are read-only: never refreshed or written |
 | 2026-09-30 | Provider logic may be ported from OpenUsage (MIT) with its notice kept; its name and branding are not used |
-| 2026-09-30 | `openusage` is removed as a dependency, for maintainability. It comes out in the same change that lands C1's direct readers, so pools are never unreadable. Until then the team plan is read through omp's `usage_history` when its token is throttled |
+| 2026-09-30 | `openusage` is removed as a dependency, for maintainability, now rather than with C1. Until C1's readers land, usage-watch has no capacity source: it still finds and shows stalled panes, but they wait instead of being nudged |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 
 ## Open questions
