@@ -38,6 +38,9 @@ usage-watch doctor    # check the setup and see what it finds
 tmux new-window -d -n usage-watch 'usage-watch run'
 ```
 
+Or watch it happen: `usage-watch dashboard --watch` shows each pool's limits
+and reset countdowns above every agent's state, refreshing as it goes.
+
 `init` only asks something when OpenUsage reports two accounts of the same
 family, for example a personal and a team Claude plan. The screen shows the
 model, not the account, so it has to be told which harness uses which.
@@ -53,7 +56,8 @@ model, not the account, so it has to be told which harness uses which.
 | `init [--account H.F=ID] [--force]` | Writes `~/.config/usage-watch/config.toml` |
 | `wait --provider ID \| --pane PANE [--timeout S]` | Blocks until the pool has capacity. Exits 0, or 1 on timeout |
 | `nudge PANE [--text T] [--force]` | Nudges one pane now, with the same safety checks |
-| `run [--once] [--dry-run]` | Watches and nudges until stopped. One per machine |
+| `dashboard [--watch]` | Live terminal view of every pool (bars, reset countdowns) and every agent's state. `--watch` also nudges, in place of `run` |
+| `run [--once] [--dry-run]` | Watches and nudges until stopped, without a screen. One per machine |
 
 Every command exits 0 on success and 1 on failure. Errors say what failed,
 what was expected, and the fix.

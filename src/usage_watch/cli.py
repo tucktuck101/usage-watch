@@ -218,6 +218,12 @@ def cmd_nudge(a) -> int:
     return 0
 
 
+def cmd_dashboard(a) -> int:
+    from . import dashboard
+    dashboard.run(scan_every=a.scan, pool_every=a.pools, watch=a.watch)
+    return 0
+
+
 def cmd_run(a) -> int:
     cfg = config.load()
     if a.interval:
@@ -270,6 +276,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--text", help="type this instead of the configured nudge")
     s.add_argument("--force", action="store_true", help="nudge even if it is not stalled with capacity")
     s.set_defaults(fn=cmd_nudge)
+
+    s = sub.add_parser("dashboard", help="live view of pools and agents; --watch also nudges")
+    s.add_argument("--watch", action="store_true", help="also nudge, like `run` (one per machine)")
+    s.add_argument("--scan", type=float, default=5, help="seconds between agent scans (default 5)")
+    s.add_argument("--pools", type=float, default=60, help="seconds between pool reads (default 60)")
+    s.set_defaults(fn=cmd_dashboard)
 
     s = sub.add_parser("run", help="watch and nudge until stopped; one per machine")
     s.add_argument("--once", action="store_true", help="one scan, then exit")

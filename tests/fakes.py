@@ -9,15 +9,16 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def openusage_json(team_session=92, team_weekly=81, reset="2026-09-30T09:00:00Z"):
+    c = {"kind": "consumption"}
     return json.dumps({
         "providers": {
-            "claude": {"resources": {"session": {"remaining": 54}, "weekly": {"remaining": 79}}},
+            "claude": {"resources": {"session": {**c, "remaining": 54}, "weekly": {**c, "remaining": 79}}},
             "claude@team": {"resources": {
-                "session": {"remaining": team_session, "resetsAt": reset},
-                "weekly": {"remaining": team_weekly},
-                "fable": {"remaining": 81},
+                "session": {**c, "remaining": team_session, "resetsAt": reset},
+                "weekly": {**c, "remaining": team_weekly},
+                "fable": {**c, "remaining": 81},
             }},
-            "codex": {"resources": {"session": {"remaining": 100}, "weekly": {"remaining": 4}}},
+            "codex": {"resources": {"session": {**c, "remaining": 100}, "weekly": {**c, "remaining": 4}}},
         },
         "errors": [],
     })

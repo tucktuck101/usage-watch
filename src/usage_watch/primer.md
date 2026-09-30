@@ -28,6 +28,10 @@ Every scan (five minutes by default) does four things:
 4. **Nudge.** When it does, it types the nudge into the pane, presses Enter,
    and checks the pane started working.
 
+To watch it happen, `usage-watch dashboard` shows every pool's limits and
+reset countdowns above every agent's state, refreshing live. With `--watch`,
+the dashboard does the nudging as well, in place of `run`.
+
 ## How it sees your setup
 
 Each agent pane gets a role:

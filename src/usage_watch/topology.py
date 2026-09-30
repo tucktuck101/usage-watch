@@ -12,6 +12,7 @@ new projects need no configuration. Sources, in order:
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 
 from . import sh
@@ -135,9 +136,15 @@ def git_place(cwd: str, cache: dict) -> tuple[str | None, str | None, str | None
     return place
 
 
-def workmux_facts(project: str) -> tuple[dict, dict]:
-    """(worktrees by path, status by pane id) for one project, if workmux manages it."""
-    trees, status = {}, {}
+TREES_TTL = 60  # `workmux list` is slow and worktrees change rarely
+_trees_cache: dict[str, tuple[float, dict]] = {}
+
+
+def workmux_trees(project: str) -> dict:
+    hit = _trees_cache.get(project)
+    if hit and time.monotonic() - hit[0] < TREES_TTL:
+        return hit[1]
+    trees = {}
     r = sh.run(["workmux", "list", "--json"], cwd=project)
     if r.code == 0:
         try:
@@ -145,6 +152,13 @@ def workmux_facts(project: str) -> tuple[dict, dict]:
                 trees[os.path.normpath(t["path"])] = t
         except (ValueError, KeyError, TypeError):
             pass
+    _trees_cache[project] = (time.monotonic(), trees)
+    return trees
+
+
+def workmux_facts(project: str) -> tuple[dict, dict]:
+    """(worktrees by path, status by pane id) for one project, if workmux manages it."""
+    trees, status = workmux_trees(project), {}
     r = sh.run(["workmux", "status", "--json"], cwd=project)
     if r.code == 0:
         try:

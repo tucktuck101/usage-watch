@@ -64,8 +64,9 @@ def observe(topo: Topology, cfg: Config, pools: Pools, memory: Memory | None = N
         obs = Observation(pane, reading)
         out.append(obs)
         if reading.state != "stalled":
-            if reading.state == "busy":
+            if reading.state == "busy":  # the pane worked again: its record is clean
                 memory.strikes.pop(pane.id, None)
+                memory.nudged.pop(pane.id, None)
                 memory.escalated.discard(pane.id)
             obs.reason = reading.note
             continue
@@ -94,19 +95,19 @@ def observe(topo: Topology, cfg: Config, pools: Pools, memory: Memory | None = N
 
 
 def nudge(obs: Observation, cfg: Config, memory: Memory, dry_run: bool = False, settle: float = 12) -> str:
+    """Type the nudge. Strikes count nudges since the pane was last seen busy;
+    a later scan that sees it busy clears them. `settle=0` skips the check."""
     text = cfg.nudge_for(obs.pane)
     if dry_run:
         return f"would type {text!r}"
     screen.type_into(obs.pane.id, text)
     memory.nudged[obs.pane.id] = obs.reading.error_key
+    memory.strikes[obs.pane.id] = memory.strikes.get(obs.pane.id, 0) + 1
+    if not settle:
+        return f"typed {text!r}"
     time.sleep(settle)
     plain, styled = screen.capture(obs.pane.id)
-    after = obs.pane.harness.read(plain, styled).state
-    if after == "stalled":
-        memory.strikes[obs.pane.id] = memory.strikes.get(obs.pane.id, 0) + 1
-    else:
-        memory.strikes.pop(obs.pane.id, None)
-    return f"typed {text!r}; pane now {after}"
+    return f"typed {text!r}; pane now {obs.pane.harness.read(plain, styled).state}"
 
 
 def next_sleep(observations: list[Observation], interval: int) -> float:

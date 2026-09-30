@@ -53,9 +53,24 @@ def test_stalled_pane_with_capacity_is_nudged_once(machine):
     obs = run_scan(m)
     assert obs["%1"].action == "nudge" and obs["%1"].provider == "claude@team"
     memory = watcher.Memory()
-    result = watcher.nudge(obs["%1"], m.cfg, memory, settle=0)
+    result = watcher.nudge(obs["%1"], m.cfg, memory, settle=1)
     assert m.typed == [("%1", "continue")]
     assert "now busy" in result
+
+
+def test_repeated_restalls_escalate_until_the_pane_works(machine):
+    m = machine(screens(p1="omp_stalled_plain"))
+    memory = watcher.Memory()
+    for key in ("a", "b", "c"):  # three different stalls, never seen busy in between
+        o = run_scan(m, memory)["%1"]
+        o.reading.error_key = key
+        assert o.action == "nudge"
+        watcher.nudge(o, m.cfg, memory, settle=0)
+    assert run_scan(m, memory)["%1"].action == "escalate"
+    m.screens["%1"] = "omp_busy"
+    run_scan(m, memory)                       # seen working: record cleared
+    m.screens["%1"] = "omp_stalled_plain"
+    assert run_scan(m, memory)["%1"].action == "nudge"
 
 
 def test_no_capacity_means_wait(machine):
