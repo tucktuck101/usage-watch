@@ -1,8 +1,13 @@
 """A terminal dashboard: every pool's limits, and every agent's state, refreshing.
 
-Agents are rescanned every few seconds, and pools are reread less often,
-since the usage source caches for minutes anyway. With --watch it also
-nudges, under the same rules and the same one-per-machine lock as `run`.
+It reads the store (F4): pools from `queries.pools`, each with its age and a
+stale mark; agents from `queries.agents`, with the nudge policy's decision
+for each, in view-only mode; and the collector's liveness line. With
+--watch it also hosts the collector runtime and the nudge policy, like
+`run`, under the same one-per-machine lock.
+
+It records its own look (D3): `opened_at` on start, `last_seen_at` on each
+refresh, `closed_at` on a clean exit (q, Esc or Ctrl-C).
 """
 
 import curses
@@ -11,13 +16,13 @@ import sys
 import threading
 import time
 
-from . import config, watcher
+from . import config, queries, store, watcher
 from .errors import Problem
-from . import pool
-from .pool import Pools, parse_time
-from .topology import scan
+from .runtime.core import default_lock_path
+from .runtime.liveness import liveness, lock_held
 
 STATE_COLOR = {"busy": 1, "idle": 0, "stalled": 3, "resuming": 2, "typing": 4, "unknown": 5}
+LOOK_WHO = LOOK_VIEW = "dashboard"
 
 
 def bar(left: float | None, width: int = 12) -> str:
@@ -27,56 +32,65 @@ def bar(left: float | None, width: int = 12) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def until(t: dt.datetime | None) -> str:
+def until(t: dt.datetime | None, now: dt.datetime | None = None) -> str:
     if not t:
         return ""
-    s = int((t - dt.datetime.now(dt.timezone.utc)).total_seconds())
+    s = int((t - (now or dt.datetime.now(dt.timezone.utc))).total_seconds())
     if s <= 0:
         return "now"
     h, m = divmod(s // 60, 60)
     return f"{h // 24}d{h % 24}h" if h >= 24 else f"{h}h{m:02d}m" if h else f"{m}m"
 
 
-def pool_lines(pools: Pools) -> list[tuple[str, int]]:
-    """(text, color) per pool window: session, weekly, then any model-specific pool."""
+def until_ms(ms: int | None, now_ms: int) -> str:
+    if ms is None:
+        return ""
+    utc = dt.timezone.utc
+    return until(dt.datetime.fromtimestamp(ms / 1000, utc), dt.datetime.fromtimestamp(now_ms / 1000, utc))
+
+
+def pool_lines(pools: list[dict], now_ms: int) -> list[tuple[str, int]]:
+    """(text, color) per pool window, from `queries.pools` rows. A stale
+    reading is shown dim, with its age and STALE, never as current (D6)."""
     lines = []
-    for pid, info in sorted(pools.providers().items()):
-        res = info.get("resources", {})
-        windows = [k for k in ("session", "weekly") if k in res]
-        windows += [k for k, r in res.items() if k not in windows and r.get("kind") == "consumption"]
-        head = f"{pid:18} {info.get('plan', '')[:10]:10}"
-        for i, name in enumerate(windows):
-            r = res[name]
-            left = r.get("remaining")
-            reset = parse_time(r.get("resetsAt"))
-            color = 3 if left is not None and left <= 5 else 2 if left is not None and left <= 25 else 1
-            when = f"resets in {until(reset)}" if reset else ""
-            label = head if i == 0 else " " * len(head)
-            pct = f"{left:>3.0f}% left" if left is not None else "   ?"
-            lines.append((f"{label}  {name:8} {bar(left)} {pct}  {when}", color))
-    if not pool.SOURCES:
-        lines.append(("no capacity source yet: readers arrive with plan item C1, until then panes wait", 5))
-    for e in pools.errors():
-        lines.append((f"{e.get('providerId', '?'):18} error: {e.get('message', '')}", 5))
+    last = None
+    for p in pools:
+        left = p["remaining_pct"]
+        color = 3 if left is not None and left <= 5 else 2 if left is not None and left <= 25 else 1
+        if p["stale"]:
+            color = 5
+        head = p["account_label"] if p["account_label"] != last else ""
+        last = p["account_label"]
+        pct = f"{left:>3.0f}% left" if left is not None else "   ?    "
+        reset = until_ms(p["resets_at"], now_ms)
+        when = f"resets in {reset}" if reset else ""
+        age = f"{p['source']} {p['age']} ago" + ("  STALE" if p["stale"] else "")
+        lines.append((f"{head[:28]:28} {p['window'][:14]:14} {bar(left)} {pct}  {when:18} {age}", color))
+    if not lines:
+        lines.append(("no capacity readings in the store yet", 5))
     return lines
 
 
-def agent_lines(observations) -> list[tuple[str, int]]:
-    rows = [("PANE    HARNESS  ROLE          PROJECT             MODEL        STATE     ACTION", 6)]
-    for o in observations:
-        p = o.pane
-        project = (p.lane or (p.project or "").rsplit("/", 1)[-1] or "-")[:18]
-        action = o.action if o.action != "none" else ""
-        if o.action == "wait" and o.capacity:
-            action = f"wait: {o.capacity.why}"
-        rows.append((f"{p.id:7} {p.harness.name:8} {p.role:13} {project:19} {(o.reading.model or '-')[:12]:12} "
-                     f"{o.reading.state:9} {action}", STATE_COLOR.get(o.reading.state, 0)))
+def agent_lines(agents: list[dict], decisions: dict | None = None) -> list[tuple[str, int]]:
+    """(text, color) per agent, from `queries.agents` rows, with the policy's
+    decision for that pane where there is one (D8: the reason is shown)."""
+    decisions = decisions or {}
+    rows = [("PANE    HARNESS  STATE     MODEL        ACCOUNT                   ACTION", 6)]
+    for g in agents:
+        d = decisions.get(g["pane"])
+        action = ""
+        if d is not None and d.action != "none":
+            action = d.action + (f": {d.reason}" if d.reason else "")
+        account = g["account_label"] or (g["account_state"] or "-")
+        rows.append((f"{g['pane']:7} {(g['harness'] or '-')[:8]:8} {g['state']:9} "
+                     f"{(g['model'] or '-')[:12]:12} {account[:25]:25} {action}",
+                     STATE_COLOR.get(g["state"], 0)))
     if len(rows) == 1:
-        rows.append(("no agent panes found in tmux", 5))
+        rows.append(("no agent panes seen in the last 2 minutes", 5))
     return rows
 
 
-def draw(win, pools_view, agents_view, events, status):
+def draw(win, pools_view, agents_view, events, status, live=""):
     win.erase()
     h, w = win.getmaxyx()
     y = 0
@@ -88,6 +102,8 @@ def draw(win, pools_view, agents_view, events, status):
         y += 1
 
     put(status, 6, curses.A_BOLD)
+    if live:
+        put(live, 5)
     put("")
     put("POOLS", 6, curses.A_BOLD)
     for text, color in pools_view:
@@ -105,52 +121,88 @@ def draw(win, pools_view, agents_view, events, status):
 
 
 class Worker(threading.Thread):
-    """Scans and reads pools off the screen loop, so keys never wait on a scan."""
+    """Reads the store off the screen loop, so keys never wait on a read.
+    With `watch`, it also hosts the collector runtime and the nudge policy.
+    Every connection is opened and used on this thread."""
 
-    def __init__(self, cfg, scan_every: float, pool_every: float, watch: bool):
+    def __init__(self, cfg, scan_every: float, watch: bool, clock=time.time):
         super().__init__(daemon=True)
-        self.cfg, self.scan_every, self.pool_every, self.watch = cfg, scan_every, pool_every, watch
+        self.cfg, self.scan_every, self.watch, self.clock = cfg, scan_every, watch, clock
         self.stop, self.wake = threading.Event(), threading.Event()
-        self.force = False
+        self.clean = False  # set with stop on q, Esc or Ctrl-C: the look closes
         self.pools_view: list = []
-        self.agents_view: list = [("scanning…", 5)]
+        self.agents_view: list = [("reading…", 5)]
+        self.live = ""
         self.events: list[str] = []
         self.problem = ""
-        self.memory = watcher.Memory()
-        self.log = watcher.Log(to_file=watch)
+        self.file_log = watcher.Log(to_file=watch).path
+
+    def log(self, msg: str) -> None:
+        """An event on screen and, with --watch, in the log file; never on
+        stdout, which curses owns."""
+        self.events.append(f"{dt.datetime.now():%H:%M:%S} {msg}")
+        if self.file_log:
+            with open(self.file_log, "a") as f:
+                f.write(f"{dt.datetime.now().astimezone():%Y-%m-%d %H:%M:%S} {msg}\n")
 
     def run(self):
-        pools, pools_at = Pools(), 0.0
-        while not self.stop.is_set():
-            force, self.force = self.force, False
-            try:
-                if force or time.monotonic() - pools_at >= self.pool_every:
-                    pools, pools_at = Pools(), time.monotonic()
-                    if force:
-                        pools.load(force=True)
-                    self.pools_view = pool_lines(pools)
-                observations = watcher.observe(scan(), self.cfg, pools, self.memory)
-                self.agents_view = agent_lines(observations)
-                if self.watch:
-                    self.act(observations)
-                self.problem = ""
-            except Problem as e:
-                self.problem = e.what
-            self.wake.wait(self.scan_every)
-            self.wake.clear()
+        from .cli import Host, policy_class
+        host = viewer = conn = rw = None
+        try:
+            if self.watch:
+                host = Host(self.cfg, act=True, log=self.log)
+                host.start()
+            while not self.stop.is_set():
+                try:
+                    decisions = host.tick() if host else None
+                    if conn is None and store.default_path().exists():
+                        conn = store.connect(readonly=True)
+                        Policy = policy_class()
+                        if Policy is not None and not self.watch:
+                            # View only: the policy decides but never types,
+                            # on a read-only connection (D3: the dashboard
+                            # writes only its own looks row).
+                            viewer = Policy(conn, self.cfg, act=False)
+                        rw = store.connect()
+                        queries.open_look(rw, LOOK_WHO, LOOK_VIEW, int(self.clock() * 1000))
+                    if viewer is not None:
+                        try:
+                            decisions = viewer.tick()
+                        except Exception as e:
+                            decisions = None
+                            self.log(f"nudge policy (view only) failed: {type(e).__name__}")
+                    if self.refresh(conn, decisions) and rw is not None:
+                        queries.touch_look(rw, LOOK_WHO, LOOK_VIEW, int(self.clock() * 1000))
+                except Problem as e:
+                    self.problem = e.what
+                self.wake.wait(self.scan_every)
+                self.wake.clear()
+            if self.clean and rw is not None:
+                queries.close_look(rw, LOOK_WHO, LOOK_VIEW, int(self.clock() * 1000))
+        except Problem as e:
+            self.problem = e.what
+        finally:
+            for c in (conn, rw):
+                if c is not None:
+                    c.close()
+            if host is not None:
+                host.stop()
 
-    def act(self, observations):
-        for o in observations:
-            if o.action == "nudge":
-                msg = f"{o.pane.id} {o.pane.harness.name}: {watcher.nudge(o, self.cfg, self.memory, settle=0)}"
-            elif o.action == "escalate" and o.pane.id not in self.memory.escalated:
-                self.memory.escalated.add(o.pane.id)
-                msg = f"ESCALATE {o.reason.splitlines()[0]}"
-                watcher.notify("usage-watch", msg)
-            else:
-                continue
-            self.log(msg)
-            self.events.append(f"{dt.datetime.now():%H:%M:%S} {msg}")
+    def refresh(self, conn, decisions) -> bool:
+        """Rebuild the views; True after a full render from the store."""
+        t = self.clock()
+        self.live = liveness(now=t).message()
+        if conn is None:
+            self.pools_view, self.agents_view = pool_lines([], int(t * 1000)), agent_lines([])
+            return False
+        status = store.schema_status(conn)
+        if not status.readable:
+            self.problem = status.message
+            return False
+        self.pools_view = pool_lines(queries.pools(conn, t), int(t * 1000))
+        self.agents_view = agent_lines(queries.agents(conn, t), {d.pane: d for d in decisions or []})
+        self.problem = ""
+        return True
 
 
 def loop(win, worker: Worker):
@@ -161,30 +213,38 @@ def loop(win, worker: Worker):
         curses.init_pair(n, c, -1)
     win.timeout(250)
     worker.start()
-    mode = "watching and nudging" if worker.watch else "view only (--watch to nudge)"
+    mode = "collecting and nudging" if worker.watch else "view only (--watch to collect and nudge)"
     while True:
         status = f"usage-watch  {dt.datetime.now():%H:%M:%S}  {mode}  ·  r refresh  q quit"
         if worker.problem:
             status += f"  ·  ERROR {worker.problem}"
-        draw(win, worker.pools_view, worker.agents_view, worker.events, status)
+        draw(win, worker.pools_view, worker.agents_view, worker.events, status, worker.live)
         key = win.getch()
         if key in (ord("q"), ord("Q"), 27):
+            worker.clean = True
             worker.stop.set()
             worker.wake.set()
             return
         if key in (ord("r"), ord("R")):
-            worker.force = True
             worker.wake.set()
 
 
-def run(scan_every: float = 5, pool_every: float = 60, watch: bool = False) -> None:
+def run(scan_every: float = 5, watch: bool = False) -> None:
     if not sys.stdout.isatty():
         raise Problem("the dashboard needs an interactive terminal",
                       fix="run it in a terminal, or use `usage-watch status --json` from scripts")
     cfg = config.load()
-    lock = watcher.acquire_lock() if watch else None
+    if watch and lock_held(default_lock_path()):
+        raise Problem("another collector runtime is already running",
+                      expected="one collector runtime per machine, holding run.lock",
+                      fix="use `usage-watch dashboard` without --watch to view it, or stop the other one")
+    worker = Worker(cfg, scan_every, watch)
     try:
-        curses.wrapper(loop, Worker(cfg, scan_every, pool_every, watch))
+        curses.wrapper(loop, worker)
+    except KeyboardInterrupt:
+        worker.clean = True
     finally:
-        if lock:
-            lock.close()
+        worker.stop.set()
+        worker.wake.set()
+        if worker.is_alive():
+            worker.join(timeout=10)

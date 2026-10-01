@@ -30,10 +30,12 @@ def test_config_render_round_trips(tmp_path):
 
 
 def test_bad_config_is_a_prompt(tmp_path, capsys, monkeypatch):
+    # `status` reads only the store now, so `doctor` is the command that reads config.
     path = tmp_path / "c.toml"
     path.write_text("[defaults\n")
     monkeypatch.setenv("USAGE_WATCH_CONFIG", str(path))
-    assert cli.main(["status"]) == 1
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert cli.main(["doctor"]) == 1
     err = capsys.readouterr().err
     assert "not valid TOML" in err and "fix:" in err
 

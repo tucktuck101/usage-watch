@@ -53,7 +53,7 @@ from ..model import (
     CAPACITY_STATUSES, UNSTATED_WINDOW, AttributionEvidence, CapacitySample, Session,
     UsageObservation, session_key,
 )
-from ..runtime.core import account_alias_value
+from ..runtime.core import AliasLink, account_alias_value
 
 __all__ = [
     "OmpSessionSource", "OmpUsageCacheSource", "account_provider", "capacity_subject_id",
@@ -384,17 +384,24 @@ class OmpSessionSource:
             st["started"] = t
 
         cred = msg.get("credentialId")
-        if skey and _is_int(cred) and cred not in st["creds"]:
+        # omp rotates logins within a session. Evidence is emitted at each
+        # switch, valid from the switch: the write path closes the previous
+        # login's window there, so "the account at time t" has one answer
+        # while the session as a whole can still be ambiguous (assumption A19).
+        if skey and _is_int(cred) and cred != st.get("last_cred"):
             cred_provider, key = self._credential(cred)
             acct_provider = account_provider(cred_provider)
             if acct_provider and isinstance(key, str) and key:
-                st["creds"].append(cred)
+                st["last_cred"] = cred
+                if cred not in st["creds"]:
+                    st["creds"].append(cred)
                 items.append(AttributionEvidence(
                     subject_kind="session", subject_id=skey, dimension="account",
                     value=account_alias_value(acct_provider, "omp.identity_key",
                                               identity.account(acct_provider, key, self.secret)),
                     method="credential_id", source=SESSION_SOURCE, confidence="authoritative",
                     validity="historical", first_observed_at=t, last_confirmed_at=t,
+                    valid_from=t,
                 ))
         return True
 
@@ -485,6 +492,19 @@ class OmpUsageCacheSource:
                 identity.account(acct_provider, f"{account_id}|{org_id}".lower(), self.secret))
 
         items: list = []
+        email = meta.get("email")
+        if (acct_provider and alias is not None and isinstance(email, str) and email):
+            # The report co-reports omp's own login identity, whose format
+            # `email:<e>|org:<orgId>` (R8) was verified on this machine to equal
+            # auth_credentials.identity_key for every report. The email is used
+            # only inside the keyed hash, never stored (D5).
+            items.append(AliasLink(
+                provider=acct_provider, kind_a="omp.report_account",
+                hash_a=alias.split(":", 3)[3],
+                kind_b="omp.identity_key",
+                hash_b=identity.account(acct_provider, f"email:{email}|org:{org_id}", self.secret),
+                source=CACHE_SOURCE,
+                verified_by="check:omp-identity-key-format-2026-10-01"))
         limits = report.get("limits") if isinstance(report.get("limits"), list) else []
         for limit in limits:
             if not isinstance(limit, dict):

@@ -27,6 +27,7 @@ class Reading:
     error_key: str | None = None    # identifies one stall, so it is nudged once
     reset_hint: dt.datetime | None = None  # when the screen says the limit lifts
     note: str = ""
+    retry_after_ms: int | None = None  # the provider's own wait, relative to the stall's onset
 
 
 class Adapter:

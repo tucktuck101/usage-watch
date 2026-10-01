@@ -153,17 +153,6 @@ def test_second_watcher_is_refused(machine):
     lock.close()
 
 
-def test_status_json_and_exit_codes(machine, capsys, monkeypatch, tmp_path):
-    m = machine(screens(p1="omp_stalled_plain"))
-    cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text(config.render(ACCOUNTS))
-    monkeypatch.setenv("USAGE_WATCH_CONFIG", str(cfg_file))
-    assert cli.main(["status", "--json"]) == 0
-    data = json.loads(capsys.readouterr().out)
-    one = next(a for a in data["agents"] if a["pane"] == "%1")
-    assert one["state"] == "stalled" and one["action"] == "nudge" and one["capacity"]["ok"] is True
-
-
 def test_nudge_command_refuses_busy_pane_with_a_fix(machine, capsys, monkeypatch, tmp_path):
     machine(screens())
     monkeypatch.setenv("USAGE_WATCH_CONFIG", str(tmp_path / "none.toml"))

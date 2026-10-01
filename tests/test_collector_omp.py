@@ -74,7 +74,7 @@ def db(tmp_path):
 def split(items):
     out = {Session: [], UsageObservation: [], AttributionEvidence: [], CapacitySample: []}
     for i in items:
-        out[type(i)].append(i)
+        out.setdefault(type(i), []).append(i)
     return out
 
 
@@ -146,8 +146,10 @@ def test_account_evidence_per_credential(root, db):
     assert {e.value for e in ev} == expected
     for e in ev:
         assert (e.subject_kind, e.subject_id, e.dimension) == ("session", f"omp:{PARENT}", "account")
-        assert (e.method, e.source, e.confidence, e.validity, e.valid_from) == (
-            "credential_id", "omp.session", "authoritative", "historical", 0)
+        assert (e.method, e.source, e.confidence, e.validity) == (
+            "credential_id", "omp.session", "authoritative", "historical")
+        # valid from the request that switched to this login (A19)
+        assert e.valid_from == e.first_observed_at > 0
 
 
 def test_only_named_columns_are_selected(root, db, monkeypatch):
@@ -345,7 +347,8 @@ def test_through_the_runtime_into_the_store(root, db, tmp_path, monkeypatch):
         # Two credentials on one session: ambiguous, by design (D2).
         assert states.pop(f"session/omp:{PARENT}") == "ambiguous"
         assert set(states.values()) == {"attributed"} and len(states) == 3
-        assert conn.execute("select count(*) from account_aliases").fetchone() == (3,)
+        # 3 reported aliases, plus the identity key the usage report co-reports (AliasLink)
+        assert conn.execute("select count(*) from account_aliases").fetchone() == (4,)
     finally:
         conn.close()
 

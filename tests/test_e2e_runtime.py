@@ -158,3 +158,73 @@ def test_a_bad_batch_rolls_back_and_the_runtime_carries_on(paths):
     err = conn.execute("select last_error from collector_status where collector='claude.transcript'").fetchone()
     conn.close()
     assert err is None or "nonsense" not in (err[0] or "")  # D5: errors never carry values
+
+
+def test_co_reported_aliases_merge_into_one_account(paths):
+    from usage_watch.runtime.core import AliasLink, WritePath, account_alias_value
+    from usage_watch.runtime import accounts
+    db, _ = paths
+    conn = store.connect(db)
+    store.migrate(conn)
+    wp = WritePath(conn)
+
+    class Src:
+        name, primary, merge = "omp.usage_cache", False, None
+
+    ev = AttributionEvidence(
+        subject_kind="session", subject_id="omp:s1", dimension="account",
+        value=account_alias_value("anthropic", "omp.identity_key", "a" * 16),
+        method="credential_id", source="omp.session", confidence="authoritative",
+        validity="historical", first_observed_at=T0, last_confirmed_at=T0)
+    link = AliasLink(provider="anthropic", kind_a="omp.report_account", hash_a="b" * 16,
+                     kind_b="omp.identity_key", hash_b="a" * 16, source="omp.usage_cache",
+                     verified_by="check:test")
+    wp.apply(Src(), [ev])
+    before = attribution.effective(conn, "session", "omp:s1", "account").value
+    wp.apply(Src(), [link])
+    keys = {accounts.canonical(conn, k) for (k,) in conn.execute("select account_key from accounts")}
+    assert len(keys) == 1                      # one canonical account
+    after = attribution.effective(conn, "session", "omp:s1", "account").value
+    assert after == keys.pop() and (before == after or before != after)
+    wp.apply(Src(), [link])                    # repeating the link is harmless
+    assert conn.execute("select count(*) from account_merges where revoked_at is null").fetchone()[0] <= 1
+    conn.close()
+
+
+def test_usage_by_account_resolves_rotating_logins_per_request(paths):
+    """A session that switched logins is ambiguous as a whole, but each request
+    is attributed to the login valid at its own time (A19); totals unchanged."""
+    from usage_watch import queries
+    from usage_watch.runtime.core import WritePath
+    from usage_watch.runtime import accounts
+    db, _ = paths
+    conn = store.connect(db)
+    store.migrate(conn)
+    a = accounts.create_account(conn, "anthropic")
+    b = accounts.create_account(conn, "anthropic")
+    wp = WritePath(conn)
+
+    class Src:
+        name, primary, merge = "omp.session", True, None
+
+    sk = "omp:rot"
+    items = [Session(session_key=sk, harness="omp", session_id="rot", started_at=T0)]
+    for i, (acct, t) in enumerate(((a, T0), (b, T0 + 10), (a, T0 + 20))):
+        items.append(AttributionEvidence(
+            subject_kind="session", subject_id=sk, dimension="account", value=acct,
+            method="credential_id", source="omp.session", confidence="authoritative",
+            validity="historical", first_observed_at=t, last_confirmed_at=t, valid_from=t))
+    for i, t in enumerate((T0 + 1, T0 + 11, T0 + 12, T0 + 21)):
+        items.append(UsageObservation(
+            source="omp.session", stream_key=sk, source_request_key=f"r{i}", confidence="authoritative",
+            observed_at=t, harness="omp", provider="anthropic", model="m", session_key=sk,
+            uncached_input_tokens=1, cache_read_input_tokens=0, cache_write_input_tokens=0,
+            output_tokens=1))
+    wp.apply(Src(), items)
+    conn.close()
+    ro = store.connect(db, readonly=True)
+    res = queries.usage(ro, None, None, "account")
+    by_key = {(r["state"], r["key"]): r["requests"] for r in res["rows"]}
+    assert by_key == {("attributed", a): 2, ("attributed", b): 2}
+    assert res["total"]["requests"] == 4 == sum(r["requests"] for r in res["rows"])
+    ro.close()

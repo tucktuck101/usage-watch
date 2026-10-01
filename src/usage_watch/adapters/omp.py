@@ -13,6 +13,7 @@ from .base import Adapter, Reading, key_of, lines_of
 
 ERROR = re.compile(r"^\s*Error: .*(429|rate_limit_error|usage limit)", re.I)
 CONTINUATION = re.compile(r"rate_limit_error|retry-after-ms|request_id|^\s*later\.|^\s*\{", re.I)
+RETRY_AFTER = re.compile(r"retry-after-ms=(\d+)")
 REQUEST_ID = re.compile(r'"request_id":"([^"]+)"')
 IDLE_HEADER = re.compile(r"^╭──\s*π\s*>")
 MODEL = re.compile(r"[◒◔◑◐○●◕◓◌]\s+([A-Za-z][\w.\- ]*?)\s+>")
@@ -50,4 +51,6 @@ class Omp(Adapter):
             return Reading("idle", model)
         tail = "\n".join(body[max(0, anchor - 3):])
         ids = REQUEST_ID.findall(tail)
-        return Reading("stalled", model, error_key=ids[-1] if ids else key_of(body[anchor]))
+        waits = RETRY_AFTER.findall(tail)
+        return Reading("stalled", model, error_key=ids[-1] if ids else key_of(body[anchor]),
+                       retry_after_ms=int(waits[-1]) if waits else None)

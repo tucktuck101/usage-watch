@@ -97,10 +97,20 @@ class ScreenSource:
                     still[pane.id] = prior
                 continue
 
+            # The provider's own retry wait is relative to when the stall
+            # began, so it is pinned to the onset; recomputing it from each
+            # re-read would push it later forever.
+            same = (reading.state == "stalled" and prior is not None
+                    and prior["error_key"] == reading.error_key)
+            onset = prior["onset"] if same else now
+            reset_ms = _ms(reading.reset_hint)
+            if (reset_ms is None and reading.state == "stalled"
+                    and getattr(reading, "retry_after_ms", None)):
+                reset_ms = onset + reading.retry_after_ms
             items.append(AgentStateSample(
                 pane=pane.id, observed_at=now, state=reading.state, source=SOURCE,
                 harness=pane.harness.name, session_key=None, model=reading.model,
-                reset_hint=_ms(reading.reset_hint), error_key=reading.error_key,
+                reset_hint=reset_ms, error_key=reading.error_key,
                 note=reading.note or None, confidence="inferred",
             ))
 
@@ -127,7 +137,7 @@ class ScreenSource:
                 stream_key=identity.stream(raw, self.secret),
                 source_key=stall_id(raw, reading.error_key or "", now, self.secret),
                 kind="hit", confidence="inferred", observed_at=now,
-                resets_at=_ms(reading.reset_hint),
+                resets_at=reset_ms,
             ))
 
         # Panes that are gone are not carried over.

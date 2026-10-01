@@ -260,6 +260,8 @@ class WritePath:
                 conn, item, getattr(source, "merge", None))
             _op("reconcile", "reconcile_observation")(
                 conn, observation_id, primary=bool(getattr(source, "primary", False)))
+        elif isinstance(item, AliasLink):
+            _apply_alias_link(conn, item)
         elif isinstance(item, model.AttributionEvidence):
             item = _resolve_account_alias(conn, item)
             _op("attribution", "add_evidence")(conn, item)
@@ -274,6 +276,44 @@ class WritePath:
 
 
 ALIAS_PREFIX = "alias:"
+
+
+@dataclasses.dataclass(frozen=True)
+class AliasLink:
+    """Two identifiers a source reports together for one account (D7
+    `co_reported`), with what verified that they denote the same account.
+    Both are already keyed hashes; nothing raw reaches the write path."""
+    provider: str
+    kind_a: str
+    hash_a: str
+    kind_b: str
+    hash_b: str
+    source: str
+    verified_by: str
+
+
+def _apply_alias_link(conn: sqlite3.Connection, link: AliasLink) -> None:
+    assert_alias = _op("accounts", "assert_alias")
+    canonical = _op("accounts", "canonical")
+    a = canonical(conn, assert_alias(conn, provider=link.provider, alias_kind=link.kind_a,
+                                     alias_hash=link.hash_a, asserted_by=link.source,
+                                     evidence="reported", confidence="observed"))
+    b = canonical(conn, assert_alias(conn, provider=link.provider, alias_kind=link.kind_b,
+                                     alias_hash=link.hash_b, asserted_by=link.source,
+                                     evidence="reported", confidence="observed"))
+    if a == b:
+        return
+    into, frm = min(a, b), max(a, b)  # D7: an evidence merge goes into the smaller key
+    try:
+        _op("accounts", "merge")(conn, frm, into, evidence="co_reported",
+                                 verified_by=link.verified_by)
+    except Exception as exc:  # e.g. the user revoked this merge: respect it
+        if type(exc).__name__ != "Problem":
+            raise
+        return
+    # Effective rows resolved before the merge still name the old account.
+    conn.execute("UPDATE effective_attributions SET value = ? WHERE dimension = 'account'"
+                 " AND value = ?", (into, frm))
 
 
 def account_alias_value(provider: str, alias_kind: str, alias_hash: str) -> str:

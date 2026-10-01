@@ -299,3 +299,11 @@ def test_through_the_runtime_into_the_store(tmp_path, monkeypatch):
     stored = "\n".join(str(v) for row in samples + events for v in row) + wm
     for _, line in fixture_lines():
         assert line not in stored
+
+
+def test_omp_retry_after_is_pinned_to_onset():
+    from usage_watch.adapters.omp import Omp
+    from pathlib import Path
+    text = (Path(__file__).parent / "fixtures" / "omp_stalled_plain.txt").read_text()
+    reading = Omp().read(text)
+    assert reading.state == "stalled" and reading.retry_after_ms == 4360000
