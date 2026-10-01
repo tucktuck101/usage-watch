@@ -148,25 +148,25 @@ F1 or F2.
 | F1 | The store, the model types from D1 and D3, and the account registry from D7. **Done 2026-10-01** (`model.py`, `store/`, `identity.py`) |
 | F2 | The collector runtime: scheduling, watermarks, deduplication, writing records. **Done 2026-10-01** (`runtime/`: core, liveness, reconcile, attribution, accounts). Not yet wired into commands (F3–F5); the per-source field allowlist check arrives with each collector (phase 4) |
 | F3 | Existing logic becomes collectors: screen states (inferred), tmux, git and workmux enrichment. **Done 2026-10-01**: `collectors/screen.py` (state samples, one limit event per stall occurrence) and `collectors/topology.py` (checkouts). Roles, lanes and panes on sessions wait for the session joins in C4 |
-| F4 | `status` and `dashboard` read from the store |
-| F5 | The watcher reads its nudge decisions from the store, and its behaviour conforms to D8, confirmed by tests of D8's conditions |
+| F4 | `status` and `dashboard` read from the store. **Done 2026-10-01** (prototype): `status`, `doctor`, `dashboard`, `usage` read the store with liveness; `run` hosts the runtime |
+| F5 | The watcher reads its nudge decisions from the store, and its behaviour conforms to D8, confirmed by tests of D8's conditions. **Done 2026-10-01** (prototype): `policy.py` implements D8, plus the harness retry-after rule (A20) |
 
 ### Phase 4: collectors
 
 | # | Task | Needs |
 |---|---|---|
-| C1 | Capacity for every account discovered (D7), reading no credential of any kind (R9): a Claude **status line tap** (opt-in, reversible wrap of the user's `statusLine` command that records `rate_limits`); Claude Code's `cachedUsageUtilization`, honouring its age; transcript limit hit and reset events; omp's `usage_cache` entries for accounts omp holds (R10, about a minute fresh; `usage_history` as the hourly fallback); Codex's `rate_limits` from its session files; on-screen reset hints. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9 |
-| C2 | Token usage from session logs (Claude, Codex, omp), with backfill. The session log is each harness's **primary counting source** | R2 |
+| C1 | Capacity for every account discovered (D7), reading no credential of any kind (R9): a Claude **status line tap** (opt-in, reversible wrap of the user's `statusLine` command that records `rate_limits`); Claude Code's `cachedUsageUtilization`, honouring its age; transcript limit hit and reset events; omp's `usage_cache` entries for accounts omp holds (R10, about a minute fresh; `usage_history` as the hourly fallback); Codex's `rate_limits` from its session files; on-screen reset hints. Registers them in `pool.SOURCES`, which is empty until then | 0.1, 0.2, D7, R8, R9. **Done 2026-10-01** (prototype): Claude cached utilization and status line tap (built, not installed), Codex rate limits, omp usage cache; no credentials read |
+| C2 | Token usage from session logs (Claude, Codex, omp), with backfill. The session log is each harness's **primary counting source** | R2. **Done 2026-10-01** (prototype): Claude, Codex and omp session logs, with backfill; omp side calls as auxiliary (A10) |
 | C3 | Local OTLP receiver on 127.0.0.1 (D6): OTLP/HTTP with JSON (standard library) and protobuf (the optional extra `usage-watch[otlp]`). Native OTel is a preferred telemetry source but **secondary for counting**: its observations count only when linked to a primary session-log one | R1 |
-| C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2 |
-| C5 | Pane-to-account attribution: read only `CLAUDE_CONFIG_DIR` or `CODEX_HOME` from the harness process's environment, never other variables; for omp, per R7; config as the fallback | R7, D7 |
+| C4 | Enrichment: attach project, branch, worktree, role and pane to usage records | D2. **Partly done 2026-10-01**: pane-to-session joins (Claude session file, omp terminal-session and open session file); role, lane and branch enrichment still to do |
+| C5 | Pane-to-account attribution: read only `CLAUDE_CONFIG_DIR` or `CODEX_HOME` from the harness process's environment, never other variables; for omp, per R7; config as the fallback | R7, D7. **Partly done 2026-10-01**: accounts from omp credential ids (at each switch, A19), Claude login state and owner fields, omp co-reported aliases (A17); Codex without OTel stays unknown |
 
 ### Phase 5: views
 
 | # | Task |
 |---|---|
-| V1 | `usage-watch usage`: breakdowns by provider, account, model, harness, project, branch, role or session, over a time range |
-| V2 | "Since I last looked" |
+| V1 | `usage-watch usage`: breakdowns by provider, account, model, harness, project, branch, role or session, over a time range. **Done 2026-10-01** (prototype): `usage-watch usage --by …`, accounts resolved per request time (A19) |
+| V2 | "Since I last looked". **Done 2026-10-01** (prototype): `usage --since-last`, per D3 look semantics |
 | V3 | Dashboard panels: burn rate, time until each pool is empty, trends, peak concurrency |
 | V4 | Calibrated capacity estimate: between anchors, estimate each pool from the usage stream, using a per-account rate learned from pairs of anchors ("the pool moved 4% while this much cost-weighted usage happened"). Shown as an estimate with its last anchor's age. A new anchor that jumps more than local usage explains flags usage elsewhere (web, phone, other machines) |
 
@@ -181,7 +181,7 @@ F1 or F2.
 
 | # | Task |
 |---|---|
-| A1 | Pool thresholds, and burn-rate alerts ("empty before reset") |
+| A1 | Pool thresholds, and burn-rate alerts ("empty before reset"). **Pool thresholds done 2026-10-01** (prototype, 20% and 5%); burn-rate alerts not yet |
 | A2 | Anomalies: an unusually expensive session or project, or a concurrency spike |
 | A3 | Alert channels (desktop notification exists; others pluggable), with quiet hours and de-duplication |
 
