@@ -186,8 +186,8 @@ def agents(conn: sqlite3.Connection, now: float) -> list[dict]:
                     join = AMBIGUOUS
         account = account_state = None
         if session:
-            # The account in use now (A19), the same answer the nudge policy uses.
-            from .policy import account_at
+            # The account in use now (A19).
+            from .runtime.attribution import account_at
             eff = account_at(conn, session, now_ms)
             account_state = eff.state
             if eff.state == "attributed" and eff.value:
@@ -270,7 +270,7 @@ def _resolve_ambiguous_accounts_at_time(conn: sqlite3.Connection, base: str, whe
     rotates logins), resolve each request at its own time: D2's rule with the
     request's `observed_at` as the subject time (A19). Results go to a temp
     table, so the read-only store is never written. Returns whether any were."""
-    from .policy import account_at
+    from .runtime.attribution import account_at
     sessions = [r[0] for r in conn.execute(
         "SELECT subject_id FROM effective_attributions WHERE subject_kind = 'session'"
         " AND dimension = 'account' AND state = 'ambiguous'")]

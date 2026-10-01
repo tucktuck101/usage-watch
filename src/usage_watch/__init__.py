@@ -1,3 +1,3 @@
-"""usage-watch: nudge AI coding agents that stalled on a usage limit."""
+"""usage-watch: terminal observability for AI coding agents: usage, capacity and agent state."""
 
 __version__ = "0.1.0"

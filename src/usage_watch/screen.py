@@ -1,6 +1,4 @@
-"""Read a pane's screen, and type into it."""
-
-import time
+"""Read a pane's screen. Read-only: nothing here types into a pane."""
 
 from . import sh
 from .errors import Problem
@@ -19,14 +17,3 @@ def capture(pane_id: str) -> tuple[str, str]:
     styled = sh.run(["tmux", "capture-pane", "-p", "-J", "-e", "-t", pane_id, "-S", "-12"])
     return plain.out, styled.out if styled.code == 0 else ""
 
-
-def type_into(pane_id: str, text: str) -> None:
-    """Type text literally, then press Enter as a separate key."""
-    r = sh.run(["tmux", "send-keys", "-t", pane_id, "-l", text])
-    if r.code != 0:
-        raise Problem(
-            f"could not type into pane {pane_id}: {r.err.strip()}",
-            fix=f"check the pane exists and accepts input: tmux send-keys -t '{pane_id}' ''",
-        )
-    time.sleep(0.5)
-    sh.run(["tmux", "send-keys", "-t", pane_id, "Enter"])

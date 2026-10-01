@@ -9,7 +9,7 @@ An adapter reads the visible screen and says one of:
   typing        someone has text in the input box; never type over it
   unknown       the screen did not match what the adapter knows
 
-Anything the adapter is unsure of is `unknown`, and `unknown` is never nudged.
+Anything the adapter is unsure of is `unknown`: shown as unknown, never guessed.
 """
 
 import datetime as dt
@@ -24,7 +24,7 @@ STATES = ("busy", "idle", "stalled", "resuming", "typing", "unknown")
 class Reading:
     state: str
     model: str | None = None        # model name as the screen shows it
-    error_key: str | None = None    # identifies one stall, so it is nudged once
+    error_key: str | None = None    # identifies the limit message of one stall
     reset_hint: dt.datetime | None = None  # when the screen says the limit lifts
     note: str = ""
     retry_after_ms: int | None = None  # the provider's own wait, relative to the stall's onset

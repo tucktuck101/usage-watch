@@ -1,5 +1,4 @@
 import datetime as dt
-from types import SimpleNamespace
 
 from usage_watch import dashboard
 
@@ -38,16 +37,22 @@ def test_pool_lines_show_each_window_its_age_and_stale_mark():
     assert dashboard.pool_lines([], NOW_MS) == [("no capacity readings in the store yet", 5)]
 
 
-def test_agent_lines_show_the_policy_decision_and_account():
+def test_agent_lines_show_the_screen_state_and_account():
+    hint = NOW_MS + 3_600_000
     agents = [
         {"pane": "%1", "harness": "claude", "state": "stalled", "model": "Opus 5.5",
-         "account_label": "team", "account_state": "attributed"},
+         "account_label": "team", "account_state": "attributed", "reset_hint": hint},
         {"pane": "%2", "harness": "omp", "state": "busy", "model": None,
-         "account_label": None, "account_state": "ambiguous"},
+         "account_label": None, "account_state": "ambiguous", "reset_hint": None},
+        {"pane": "%3", "harness": "codex", "state": "stalled", "model": None,
+         "account_label": None, "account_state": None, "reset_hint": None},
     ]
-    decision = SimpleNamespace(pane="%1", action="wait", reason="no fresh anchor for session")
-    lines = dashboard.agent_lines(agents, {"%1": decision})
+    lines = dashboard.agent_lines(agents)
     assert lines[0][1] == 6  # the header
-    assert "wait: no fresh anchor for session" in lines[1][0] and lines[1][1] == 3
+    assert "nudge" not in lines[0][0].lower() and "ACTION" not in lines[0][0]
+    clock = dt.datetime.fromtimestamp(hint / 1000).strftime("%H:%M")
+    assert lines[1][0].rstrip().endswith(f"retry after {clock}") and lines[1][1] == 3
+    assert "team" in lines[1][0] and "Opus 5.5" in lines[1][0]
     assert "ambiguous" in lines[2][0] and lines[2][0].rstrip().endswith("ambiguous")
+    assert "retry after" not in lines[3][0]
     assert dashboard.agent_lines([])[1] == ("no agent panes seen in the last 2 minutes", 5)

@@ -186,3 +186,19 @@ def test_usage_event_without_session(db):
     uid = add_event(db, None)
     r = attribution.effective(db, "usage_event", uid, "branch")
     assert (r.state, r.note) == ("unattributed", "no-session-id")
+
+
+# --- account at a point in time (A19) ---------------------------------------
+
+def test_account_at_follows_the_login_in_use_at_that_time(db):
+    a = accounts.create_account(db, "anthropic")
+    b = accounts.create_account(db, "anthropic")
+    for value, t in ((a, 100), (b, 200), (a, 300)):
+        attribution.add_evidence(db, AttributionEvidence(
+            subject_kind="session", subject_id="omp:s", dimension="account", value=value,
+            method="credential_id", source="omp.session", confidence="authoritative",
+            validity="historical", first_observed_at=t, last_confirmed_at=t, valid_from=t))
+    assert attribution.account_at(db, "omp:s", 150).value == a
+    assert attribution.account_at(db, "omp:s", 250).value == b
+    assert attribution.account_at(db, "omp:s", 999).value == a
+    assert attribution.account_at(db, "omp:s", 50).state == "unattributed"

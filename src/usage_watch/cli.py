@@ -12,15 +12,11 @@ import time
 from importlib import resources
 from pathlib import Path
 
-from . import __version__, collectors, config, queries, screen, sh, store, watcher
+from . import __version__, collectors, config, notify, queries, screen, sh, store
 from .adapters import ADAPTERS
 from .errors import Problem
-from .pool import Pools, now
 from .runtime.liveness import Liveness, liveness
 from .topology import scan
-
-FAMILIES = {"omp": ["claude", "codex"], "claude": ["claude"], "codex": ["codex"]}
-
 
 def out(obj, as_json: bool, text: str) -> None:
     print(json.dumps(obj, indent=2, default=str) if as_json else text)
@@ -42,8 +38,8 @@ def cmd_primer(a) -> int:
     if a.agent:
         parts = re.split(r"(?m)^## ", text)
         keep = [p for p in parts[1:] if p.split("\n", 1)[0].strip() in AGENT_SECTIONS]
-        text = ("# usage-watch, for agents\n\nusage-watch nudges AI agents in tmux that stopped on a usage "
-                "limit, once their pool has refilled.\n\n" + "".join("## " + p for p in keep))
+        text = ("# usage-watch, for agents\n\nusage-watch shows the state, usage and capacity of AI "
+                "agents in tmux; it never types into a pane.\n\n" + "".join("## " + p for p in keep))
     print(text.rstrip())
     return 0
 
@@ -95,6 +91,14 @@ def pool_rows(pools: list[dict], now_s: float) -> list[list]:
              p["age"] + (" STALE" if p["stale"] else "")] for p in pools]
 
 
+def screen_text(agent: dict) -> str:
+    """What the pane's screen shows: its state, and for a stalled pane the
+    time the screen says the limit lifts, as `stalled, retry after 14:02`."""
+    if agent["state"] == "stalled" and agent.get("reset_hint") is not None:
+        return f"stalled, retry after {dt.datetime.fromtimestamp(agent['reset_hint'] / 1000):%H:%M}"
+    return agent["state"]
+
+
 def cmd_status(a) -> int:
     t = time.time()
     live = liveness(now=t)
@@ -108,13 +112,13 @@ def cmd_status(a) -> int:
     text += (table(pool_rows(pools, t), ["ACCOUNT", "WINDOW", "LEFT", "RESETS", "SOURCE", "AGE"])
              if pools else "no capacity readings yet")
     text += "\n\nAGENTS\n"
-    text += (table([[g["pane"], g["harness"], g["state"], g["model"],
+    text += (table([[g["pane"], g["harness"], screen_text(g), g["model"],
                      g["session_key"] and g["session_key"][:20], g["account_label"] or g["account_state"],
                      f"{g['age_s']:.0f}s"] for g in agents],
                    ["PANE", "HARNESS", "STATE", "MODEL", "SESSION", "ACCOUNT", "AGE"])
              if agents else "no agent panes seen in the last 2 minutes")
     out({"liveness": liveness_dict(live), "pools": pools, "agents": agents,
-         "checked_at": now().isoformat()}, a.json, text)
+         "checked_at": dt.datetime.now(dt.timezone.utc).isoformat()}, a.json, text)
     return 0
 
 
@@ -266,45 +270,9 @@ def cmd_init(a) -> int:
     if a.undo or a.yes:
         raise Problem("--undo and --yes apply only to `init --claude-statusline`",
                       fix="rerun as `usage-watch init --claude-statusline --undo` (or --yes)")
-    cfg = config.load()
-    if cfg.exists and not a.force:
-        raise Problem(f"a config file already exists at {cfg.path}",
-                      fix="edit it directly, or rerun with --force to replace it")
-    pools = Pools()
-    given = {}
-    for item in a.account or []:
-        m = re.fullmatch(r"(\w+)\.(\w+)=(\S+)", item)
-        if not m:
-            raise Problem(f"cannot read --account {item!r}", expected="HARNESS.FAMILY=PROVIDER, e.g. omp.claude=claude@1a2b3c4d",
-                          fix="rerun with the value in that form")
-        given.setdefault(m[1], {})[m[2]] = m[3]
-    providers = pools.providers()
-    print("Accounts found:" if providers else "No accounts found yet (capacity sources arrive with plan item C1).")
-    for pid, info in sorted(providers.items()):
-        print(f"  {pid:24} {info.get('plan', ''):10} {info.get('displayName', '')}")
-    accounts: dict = {}
-    for harness, families in FAMILIES.items():
-        for family in families:
-            if family in given.get(harness, {}):
-                accounts.setdefault(harness, {})[family] = given[harness][family]
-                continue
-            ids = sorted(p for p in providers if p == family or p.startswith(family + "@"))
-            if len(ids) == 1:
-                accounts.setdefault(harness, {})[family] = ids[0]
-            elif len(ids) > 1:
-                if not sys.stdin.isatty():
-                    raise Problem(
-                        f"{harness} could use any of {', '.join(ids)} for {family} models, and there is no terminal to ask",
-                        fix=f"rerun with --account {harness}.{family}=<one of those ids>",
-                    )
-                choice = ""
-                while choice not in ids:
-                    choice = input(f"Which account does {harness} use for {family} models? [{'/'.join(ids)}] ").strip()
-                accounts.setdefault(harness, {})[family] = choice
-    cfg.path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.path.write_text(config.render(accounts))
-    print(f"\nwrote {cfg.path}\nnext: `usage-watch doctor` to check what it sees, then `usage-watch run` in a tmux window")
-    return 0
+    raise Problem("`init` needs --claude-statusline; there is no account config to write",
+                  expected="usage-watch init --claude-statusline [--yes|--undo]",
+                  fix="run `usage-watch init --claude-statusline` to install the status line tap")
 
 
 # init --claude-statusline ---------------------------------------------------
@@ -422,43 +390,7 @@ def cmd_statusline_tap(argv: list[str]) -> int:
     return code
 
 
-# wait / nudge / run ---------------------------------------------------------
-
-def cmd_wait(a) -> int:
-    cfg = config.load()
-    if not a.provider and not a.pane:
-        raise Problem("wait needs --provider or --pane", fix="e.g. usage-watch wait --provider claude")
-    deadline = time.monotonic() + a.timeout if a.timeout else None
-    while True:
-        pools = Pools()
-        provider, model = a.provider, None
-        if a.pane:
-            obs = next((o for o in watcher.observe(scan(), cfg, pools) if o.pane.id == a.pane), None)
-            if obs is None:
-                raise Problem(f"no agent pane {a.pane}", fix="list agent panes with `usage-watch map`")
-            model = obs.reading.model
-            provider = pools.resolve(obs.pane.harness.name, obs.pane.harness.family(model), cfg.accounts)
-        cap = pools.capacity(provider, a.min if a.min is not None else cfg.min_remaining, model)
-        if cap.ok:
-            print(f"{provider}: {cap.why}")
-            return 0
-        pause = 60.0
-        if cap.resets_at:
-            pause = max(15.0, min(300.0, (cap.resets_at - now()).total_seconds() + 30))
-        if deadline and time.monotonic() + pause > deadline:
-            raise Problem(f"{provider} still has no capacity: {cap.why}",
-                          fix="wait longer (raise --timeout), or switch the work to a pool with capacity")
-        time.sleep(pause)
-
-
-def policy_class():
-    """The nudge policy (F5), or None while it isn't installed."""
-    try:
-        from .policy import Policy
-    except ImportError:
-        return None
-    return Policy
-
+# dashboard / run -------------------------------------------------------------
 
 def alerts_class():
     """Pool alerts (A1), or None while they aren't installed."""
@@ -469,91 +401,32 @@ def alerts_class():
     return Alerts
 
 
-def cmd_nudge(a) -> int:
-    cfg = config.load()
-    pane = next((p for p in scan().agents if p.id == a.pane), None)
-    if pane is None:
-        raise Problem(f"no agent pane {a.pane}", fix="list agent panes with `usage-watch map`")
-    plain, styled = screen.capture(pane.id)
-    reading = pane.harness.read(plain, styled)
-    if reading.state == "typing":
-        raise Problem(f"{a.pane} has text in its input box", fix="clear or send it first; usage-watch never types over it")
-    if not a.force:
-        if reading.state != "stalled":
-            raise Problem(f"{a.pane} is {reading.state}: {reading.note or 'nothing to nudge'}",
-                          expected="a stalled pane whose pool has capacity",
-                          fix="wait for that, or rerun with --force if you are sure")
-        Policy = policy_class()
-        if Policy is None:
-            raise Problem("the nudge policy isn't installed, so capacity can't be confirmed",
-                          expected="the D8 nudge policy (plan item F5)",
-                          fix="rerun with --force if you are sure")
-        conn = read_store()
-        try:
-            decision = next((d for d in Policy(conn, cfg, act=False).tick() if d.pane == a.pane), None)
-        finally:
-            conn.close()
-        if decision is None or decision.action != "nudge":
-            action = decision.action if decision else "none"
-            reason = (decision.reason if decision else "") or "nothing to do"
-            raise Problem(f"{a.pane} is {reading.state}, action {action}: {reason}",
-                          expected="a stalled pane whose pool has capacity, by the nudge policy (D8)",
-                          fix="wait for that, or rerun with --force if you are sure")
-    text = a.text or cfg.nudge_for(pane)
-    screen.type_into(pane.id, text)
-    print(f"typed {text!r} into {a.pane}")
-    return 0
-
-
 def cmd_dashboard(a) -> int:
     from . import dashboard
     dashboard.run(scan_every=a.scan, watch=a.watch)
     return 0
 
 
-def log_decisions(log, decisions, waits: dict) -> None:
-    """Log nudges and escalations; a wait only when its reason changes."""
-    for d in decisions:
-        label = f"{d.pane} {d.harness or ''}".rstrip()
-        if d.action in ("nudge", "escalate"):
-            log(f"{'ESCALATE ' if d.action == 'escalate' else ''}{label}: {d.action}; {d.reason}")
-            waits.pop(d.pane, None)
-        elif d.action == "wait":
-            if waits.get(d.pane) != d.reason:
-                waits[d.pane] = d.reason
-                log(f"{label} stalled; waiting: {d.reason}")
-        else:
-            waits.pop(d.pane, None)
-
-
 class Host:
-    """The collector runtime with the nudge policy and pool alerts, in one
-    process (D3): what `run` and `dashboard --watch` host. Ownership stays
-    per part: the runtime writes data tables, the policy `nudges`, through
-    its own read-write connection."""
+    """The collector runtime with pool alerts, in one process (D3): what
+    `run` and `dashboard --watch` host. It collects and alerts; it never
+    types into a pane."""
 
-    def __init__(self, cfg, act: bool, log, sources=None):
+    def __init__(self, cfg, log, sources=None):
         from .runtime.core import Runtime
-        self.cfg, self.act, self.log = cfg, act, log
+        self.cfg, self.log = cfg, log
         self.runtime = Runtime(collectors.default_sources() if sources is None else sources)
-        self.policy = self.alerts = None
+        self.alerts = None
         self._conns: list = []
-        self.waits: dict = {}
 
     def start(self) -> None:
         self.runtime.start()  # the lock, then migrations
         try:
-            Policy, Alerts = policy_class(), alerts_class()
-            if Policy is not None:
-                conn = store.connect(self.runtime.db_path)
-                self._conns.append(conn)
-                self.policy = Policy(conn, self.cfg, act=self.act, notify=watcher.notify)
-            else:
-                self.log("the nudge policy isn't installed: collecting only")
+            Alerts = alerts_class()
             if Alerts is not None:
                 conn = store.connect(self.runtime.db_path, readonly=True)
                 self._conns.append(conn)
-                self.alerts = Alerts(conn, notify=watcher.notify)
+                self.alerts = Alerts(conn, notify=notify.notify)
         except BaseException:
             self.stop()
             raise
@@ -561,23 +434,15 @@ class Host:
     def interval(self) -> float:
         return min((float(s.interval_s) for s in self.runtime.pull), default=5.0)
 
-    def tick(self) -> list:
-        """One pass: collect, decide, alert. Returns the policy's decisions."""
+    def tick(self) -> None:
+        """One pass: collect, then alert."""
         self.runtime.run_once()
-        decisions = []
-        if self.policy is not None:
-            try:
-                decisions = self.policy.tick()
-            except Exception as e:  # D8 fails closed: no decision is no nudge
-                self.log(f"ESCALATE nudge policy failed: {type(e).__name__}")
-            log_decisions(self.log, decisions, self.waits)
         if self.alerts is not None:
             try:
                 for msg in self.alerts.check():
                     self.log(f"ALERT {msg}")
             except Exception as e:
                 self.log(f"alerts failed: {type(e).__name__}")
-        return decisions
 
     def stop(self) -> None:
         for conn in self._conns:
@@ -588,13 +453,13 @@ class Host:
 
 def cmd_run(a) -> int:
     cfg = config.load()
-    log = watcher.Log()
-    host = Host(cfg, act=not a.no_nudge, log=log)
+    log = notify.Log()
+    host = Host(cfg, log=log)
     host.start()
     try:
         every = float(a.interval) if a.interval else host.interval()
-        log(f"collecting{'' if a.no_nudge else ' and nudging'}; config "
-            f"{cfg.path if cfg.exists else '(none, defaults)'}; store {host.runtime.db_path}; every {every:g}s")
+        log(f"collecting; config {cfg.path if cfg.exists else '(none, defaults)'}; "
+            f"store {host.runtime.db_path}; every {every:g}s")
         while True:
             host.tick()
             if a.once:
@@ -612,8 +477,8 @@ def cmd_run(a) -> int:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="usage-watch",
-        description="Find AI coding agents in tmux stalled on a usage limit, and nudge them when their "
-                    "pool refills. New here? Run `usage-watch primer`.",
+        description="Watch AI coding agents in tmux: their state, token usage and the capacity left in "
+                    "each pool. It never types into a pane. New here? Run `usage-watch primer`.",
     )
     p.add_argument("--version", action="version", version=f"usage-watch {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
@@ -648,12 +513,9 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--capture", metavar="PANE", help="print a pane's screen, with personal details removed")
     s.set_defaults(fn=cmd_doctor)
 
-    s = sub.add_parser("init", help="write a config file, choosing accounts where there are several; "
-                                    "--claude-statusline installs the status line tap")
-    s.add_argument("--account", action="append", metavar="HARNESS.FAMILY=PROVIDER")
-    s.add_argument("--force", action="store_true", help="replace an existing config file")
+    s = sub.add_parser("init", help="--claude-statusline installs the status line tap")
     s.add_argument("--claude-statusline", action="store_true",
-                   help="instead: wrap Claude Code's statusLine command in ~/.claude/settings.json with "
+                   help="wrap Claude Code's statusLine command in ~/.claude/settings.json with "
                         "`usage-watch statusline-tap --`, after showing the change")
     s.add_argument("--undo", action="store_true", help="with --claude-statusline: restore the backup")
     s.add_argument("--yes", action="store_true", help="with --claude-statusline: apply without asking")
@@ -665,29 +527,15 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("command", nargs=argparse.REMAINDER, help="your status line command, after --")
     s.set_defaults(fn=None)
 
-    s = sub.add_parser("wait", help="block until a pool has capacity")
-    s.add_argument("--provider", help="provider id, as `usage-watch doctor` lists it")
-    s.add_argument("--pane", help="the pool this pane draws on")
-    s.add_argument("--min", type=float, help="session %% required (default from config)")
-    s.add_argument("--timeout", type=float, help="give up after this many seconds")
-    s.set_defaults(fn=cmd_wait)
-
-    s = sub.add_parser("nudge", help="nudge one pane now, with the same safety checks")
-    s.add_argument("pane")
-    s.add_argument("--text", help="type this instead of the configured nudge")
-    s.add_argument("--force", action="store_true", help="nudge even if it is not stalled with capacity")
-    s.set_defaults(fn=cmd_nudge)
-
     s = sub.add_parser("dashboard", help="live view of pools and agents from the store; "
-                                         "--watch also collects and nudges")
+                                         "--watch also collects and alerts")
     s.add_argument("--watch", action="store_true",
-                   help="also host the collector and nudge policy, like `run` (one per machine)")
+                   help="also host the collector and pool alerts, like `run` (one per machine)")
     s.add_argument("--scan", type=float, default=5, help="seconds between refreshes (default 5)")
     s.set_defaults(fn=cmd_dashboard)
 
-    s = sub.add_parser("run", help="collect into the store and nudge until stopped; one per machine")
+    s = sub.add_parser("run", help="collect into the store and raise pool alerts until stopped; one per machine")
     s.add_argument("--once", action="store_true", help="one pass, then exit")
-    s.add_argument("--no-nudge", action="store_true", help="collect only: decide, but never type")
     s.add_argument("--interval", type=float, metavar="N",
                    help="seconds between passes (default: the shortest collector interval)")
     s.set_defaults(fn=cmd_run)

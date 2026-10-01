@@ -1,10 +1,10 @@
 """A terminal dashboard: every pool's limits, and every agent's state, refreshing.
 
 It reads the store (F4): pools from `queries.pools`, each with its age and a
-stale mark; agents from `queries.agents`, with the nudge policy's decision
-for each, in view-only mode; and the collector's liveness line. With
---watch it also hosts the collector runtime and the nudge policy, like
-`run`, under the same one-per-machine lock.
+stale mark; agents from `queries.agents`, with what each pane's screen
+shows; and the collector's liveness line. With --watch it also hosts the
+collector runtime and pool alerts, like `run`, under the same
+one-per-machine lock. It never types into a pane.
 
 It records its own look (D3): `opened_at` on start, `last_seen_at` on each
 refresh, `closed_at` on a clean exit (q, Esc or Ctrl-C).
@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 
-from . import config, queries, store, watcher
+from . import config, notify, queries, store
 from .errors import Problem
 from .runtime.core import default_lock_path
 from .runtime.liveness import liveness, lock_held
@@ -71,19 +71,17 @@ def pool_lines(pools: list[dict], now_ms: int) -> list[tuple[str, int]]:
     return lines
 
 
-def agent_lines(agents: list[dict], decisions: dict | None = None) -> list[tuple[str, int]]:
-    """(text, color) per agent, from `queries.agents` rows, with the policy's
-    decision for that pane where there is one (D8: the reason is shown)."""
-    decisions = decisions or {}
-    rows = [("PANE    HARNESS  STATE     MODEL        ACCOUNT                   ACTION", 6)]
+def agent_lines(agents: list[dict]) -> list[tuple[str, int]]:
+    """(text, color) per agent, from `queries.agents` rows: the state the
+    screen shows, and for a stalled pane the time it says to retry after."""
+    rows = [("PANE    HARNESS  STATE     MODEL        ACCOUNT                   SCREEN", 6)]
     for g in agents:
-        d = decisions.get(g["pane"])
-        action = ""
-        if d is not None and d.action != "none":
-            action = d.action + (f": {d.reason}" if d.reason else "")
+        shows = ""
+        if g["state"] == "stalled" and g.get("reset_hint") is not None:
+            shows = f"retry after {dt.datetime.fromtimestamp(g['reset_hint'] / 1000):%H:%M}"
         account = g["account_label"] or (g["account_state"] or "-")
         rows.append((f"{g['pane']:7} {(g['harness'] or '-')[:8]:8} {g['state']:9} "
-                     f"{(g['model'] or '-')[:12]:12} {account[:25]:25} {action}",
+                     f"{(g['model'] or '-')[:12]:12} {account[:25]:25} {shows}",
                      STATE_COLOR.get(g["state"], 0)))
     if len(rows) == 1:
         rows.append(("no agent panes seen in the last 2 minutes", 5))
@@ -122,7 +120,7 @@ def draw(win, pools_view, agents_view, events, status, live=""):
 
 class Worker(threading.Thread):
     """Reads the store off the screen loop, so keys never wait on a read.
-    With `watch`, it also hosts the collector runtime and the nudge policy.
+    With `watch`, it also hosts the collector runtime and pool alerts.
     Every connection is opened and used on this thread."""
 
     def __init__(self, cfg, scan_every: float, watch: bool, clock=time.time):
@@ -135,7 +133,7 @@ class Worker(threading.Thread):
         self.live = ""
         self.events: list[str] = []
         self.problem = ""
-        self.file_log = watcher.Log(to_file=watch).path
+        self.file_log = notify.Log(to_file=watch).path
 
     def log(self, msg: str) -> None:
         """An event on screen and, with --watch, in the log file; never on
@@ -146,32 +144,22 @@ class Worker(threading.Thread):
                 f.write(f"{dt.datetime.now().astimezone():%Y-%m-%d %H:%M:%S} {msg}\n")
 
     def run(self):
-        from .cli import Host, policy_class
-        host = viewer = conn = rw = None
+        from .cli import Host
+        host = conn = rw = None
         try:
             if self.watch:
-                host = Host(self.cfg, act=True, log=self.log)
+                host = Host(self.cfg, log=self.log)
                 host.start()
             while not self.stop.is_set():
                 try:
-                    decisions = host.tick() if host else None
+                    if host is not None:
+                        host.tick()
                     if conn is None and store.default_path().exists():
+                        # D3: the dashboard writes only its own looks row.
                         conn = store.connect(readonly=True)
-                        Policy = policy_class()
-                        if Policy is not None and not self.watch:
-                            # View only: the policy decides but never types,
-                            # on a read-only connection (D3: the dashboard
-                            # writes only its own looks row).
-                            viewer = Policy(conn, self.cfg, act=False)
                         rw = store.connect()
                         queries.open_look(rw, LOOK_WHO, LOOK_VIEW, int(self.clock() * 1000))
-                    if viewer is not None:
-                        try:
-                            decisions = viewer.tick()
-                        except Exception as e:
-                            decisions = None
-                            self.log(f"nudge policy (view only) failed: {type(e).__name__}")
-                    if self.refresh(conn, decisions) and rw is not None:
+                    if self.refresh(conn) and rw is not None:
                         queries.touch_look(rw, LOOK_WHO, LOOK_VIEW, int(self.clock() * 1000))
                 except Problem as e:
                     self.problem = e.what
@@ -188,7 +176,7 @@ class Worker(threading.Thread):
             if host is not None:
                 host.stop()
 
-    def refresh(self, conn, decisions) -> bool:
+    def refresh(self, conn) -> bool:
         """Rebuild the views; True after a full render from the store."""
         t = self.clock()
         self.live = liveness(now=t).message()
@@ -200,7 +188,7 @@ class Worker(threading.Thread):
             self.problem = status.message
             return False
         self.pools_view = pool_lines(queries.pools(conn, t), int(t * 1000))
-        self.agents_view = agent_lines(queries.agents(conn, t), {d.pane: d for d in decisions or []})
+        self.agents_view = agent_lines(queries.agents(conn, t))
         self.problem = ""
         return True
 
@@ -213,7 +201,7 @@ def loop(win, worker: Worker):
         curses.init_pair(n, c, -1)
     win.timeout(250)
     worker.start()
-    mode = "collecting and nudging" if worker.watch else "view only (--watch to collect and nudge)"
+    mode = "collecting" if worker.watch else "view only (--watch to collect)"
     while True:
         status = f"usage-watch  {dt.datetime.now():%H:%M:%S}  {mode}  ·  r refresh  q quit"
         if worker.problem:

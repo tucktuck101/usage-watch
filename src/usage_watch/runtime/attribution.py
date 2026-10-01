@@ -206,3 +206,47 @@ def _has_evidence(conn, subject_kind: str, subject_id: str, dimension: str) -> b
         " AND dimension = ? LIMIT 1",
         (subject_kind, subject_id, dimension),
     ).fetchone() is not None
+
+
+LIVE_GRACE_MS = 120_000  # live evidence still counts this long after its last confirmation
+
+
+def account_at(conn: sqlite3.Connection, session_key: str, at: int) -> model.EffectiveAttribution:
+    """D2's resolution rule for a session's account, applied at time `at`
+    rather than over the session's whole span (assumption A19): a live pane
+    is shown with the account it is using now. omp rotates logins within a
+    session, so its session-level attribution can be ambiguous while the
+    account at any moment is not. Evidence counts at `at` when its window
+    covers it (live evidence: first observed to last confirmed, plus a grace).
+    Highest confidence wins; disagreement at that confidence is ambiguous."""
+    rows = conn.execute(
+        "SELECT evidence_id, value, confidence, validity, valid_from, valid_to,"
+        " first_observed_at, last_confirmed_at FROM attribution_evidence"
+        " WHERE subject_kind = 'session' AND subject_id = ? AND dimension = 'account'",
+        (session_key,)).fetchall()
+    if not rows:  # nothing to resolve at a time: the stored effective attribution stands
+        return effective(conn, "session", session_key, "account")
+    rank = {"authoritative": 3, "observed": 2, "inferred": 1}
+    valid = []
+    for eid, value, conf, validity, vfrom, vto, first, last in rows:
+        if validity == "live":
+            ok = first <= at <= last + LIVE_GRACE_MS
+        else:
+            ok = vfrom <= at and (vto is None or vto >= at)
+        if ok:
+            valid.append((rank.get(conf, 0), accounts.canonical(conn, value), conf, eid))
+    EA = model.EffectiveAttribution
+    if not valid:
+        return EA(subject_kind="session", subject_id=session_key, dimension="account",
+                  state="unattributed", value=None, confidence=None, evidence_id=None,
+                  note=f"no account evidence valid at {at}")
+    top = max(v[0] for v in valid)
+    best = [v for v in valid if v[0] == top]
+    values = {v[1] for v in best}
+    if len(values) > 1:
+        return EA(subject_kind="session", subject_id=session_key, dimension="account",
+                  state="ambiguous", value=None, confidence=best[0][2], evidence_id=None,
+                  note="several accounts valid at once")
+    return EA(subject_kind="session", subject_id=session_key, dimension="account",
+              state="attributed", value=values.pop(), confidence=best[0][2],
+              evidence_id=max(v[3] for v in best), note=None)

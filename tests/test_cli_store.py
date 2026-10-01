@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from usage_watch import cli, collectors, queries, sh, store, watcher
+from usage_watch import cli, collectors, config, dashboard, notify, queries, sh, store
 from usage_watch.model import AgentStateSample, UsageObservation
 from usage_watch.runtime.liveness import liveness
 
@@ -26,7 +26,7 @@ def state(tmp_path, monkeypatch):
         return sh.Result(1, "", "not in tests")
     monkeypatch.setattr(sh, "run", no_shell)
     monkeypatch.setattr(sh, "which", lambda name: None)
-    monkeypatch.setattr(watcher, "notify", lambda title, msg: None)
+    monkeypatch.setattr(notify, "notify", lambda title, msg: None)
     monkeypatch.setattr(cli.time, "time", lambda: NOW)
     db = tmp_path / "state" / "usage-watch" / "usage.db"
     return {"db": db, "calls": calls, "tmp": tmp_path}
@@ -41,7 +41,7 @@ def built(state):
 def test_status_without_a_store_says_how_to_start_a_collector(state, capsys):
     assert cli.main(["status"]) == 1
     err = capsys.readouterr().err
-    assert "no usage-watch store" in err and "usage-watch run --no-nudge" in err
+    assert "no usage-watch store" in err and "usage-watch run" in err
     assert not state["db"].exists()  # a reader never creates the store
 
 
@@ -49,7 +49,7 @@ def test_status_json_reads_the_store(built, capsys):
     assert cli.main(["status", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["liveness"]["state"] == "none"
-    assert "start one with: usage-watch run --no-nudge" in data["liveness"]["message"]
+    assert "start one with: usage-watch run" in data["liveness"]["message"]
     windows = {(p["account_label"], p["window"]) for p in data["pools"]}
     assert ("unattributed (codex.rollout)", "weekly") in windows
     assert [a["pane"] for a in data["agents"]] == ["%1"]
@@ -123,10 +123,10 @@ class Fake:
             AgentStateSample(pane="%9", observed_at=NOW_MS, state="stalled", source="screen")], None
 
 
-def test_run_once_no_nudge_collects_into_the_temporary_store(state, monkeypatch, capsys):
+def test_run_once_collects_into_the_temporary_store(state, monkeypatch, capsys):
     fake = Fake()
     monkeypatch.setattr(collectors, "default_sources", lambda: [fake])
-    assert cli.main(["run", "--once", "--no-nudge"]) == 0
+    assert cli.main(["run", "--once"]) == 0
     assert fake.calls == 1
     assert state["db"].exists()
     conn = store.connect(state["db"], readonly=True)
@@ -148,7 +148,7 @@ def test_run_stops_cleanly_on_ctrl_c(state, monkeypatch, capsys):
         assert seconds == 2
         raise KeyboardInterrupt
     monkeypatch.setattr(cli.time, "sleep", interrupt)
-    assert cli.main(["run", "--no-nudge", "--interval", "2"]) == 0
+    assert cli.main(["run", "--interval", "2"]) == 0
     assert "stopped" in capsys.readouterr().out
     assert liveness(db_path=state["db"]).state == "none"
 
@@ -166,10 +166,51 @@ def test_doctor_shows_liveness_and_each_collector(built, capsys):
     assert "collector claude.otel" in text and "1 unlinked observation" in text
 
 
-def test_nudge_without_tmux_types_nothing(state, capsys):
-    assert cli.main(["nudge", "%7", "--force"]) == 1
-    assert "tmux list-panes failed" in capsys.readouterr().err
-    assert not any("send-keys" in c for c in state["calls"])
+def test_removed_nudge_commands_and_flags_are_rejected(state, capsys):
+    for argv in (["run", "--once", "--no-nudge"], ["nudge", "%7"], ["nudge", "%7", "--force"],
+                 ["wait", "--provider", "claude"]):
+        with pytest.raises(SystemExit) as e:
+            cli.main(argv)
+        assert e.value.code == 2, argv
+        err = capsys.readouterr().err
+        assert "unrecognized arguments" in err or "invalid choice" in err, argv
+    assert not state["db"].exists()
+
+
+def test_plain_init_points_to_the_statusline_and_writes_nothing(state, capsys):
+    assert cli.main(["init"]) == 1
+    err = capsys.readouterr().err
+    assert "--claude-statusline" in err and "fix:" in err
+    assert not (state["tmp"] / "none.toml").exists()
+
+
+def test_help_never_mentions_nudging(capsys):
+    for argv in (["--help"], ["run", "--help"], ["status", "--help"], ["dashboard", "--help"],
+                 ["init", "--help"]):
+        with pytest.raises(SystemExit):
+            cli.main(argv)
+        assert "nudg" not in capsys.readouterr().out.lower(), argv
+
+
+def test_no_cli_path_types_into_a_pane(built, monkeypatch, capsys):
+    """run --once, status and the dashboard's pure views never reach tmux
+    send-keys: usage-watch observes, it never types."""
+    fake = Fake()
+    monkeypatch.setattr(collectors, "default_sources", lambda: [fake])
+    assert cli.main(["status"]) == 0
+    assert cli.main(["status", "--json"]) == 0
+    assert cli.main(["run", "--once"]) == 0
+    conn = store.connect(built["db"], readonly=True)
+    try:
+        agents = queries.agents(conn, NOW)
+        dashboard.pool_lines(queries.pools(conn, NOW), NOW_MS)
+        dashboard.agent_lines(agents)
+        worker = dashboard.Worker(config.load(), 1, watch=False, clock=lambda: NOW)
+        assert worker.refresh(conn)
+    finally:
+        conn.close()
+    assert not any("send-keys" in " ".join(c) for c in built["calls"])
+    assert not hasattr(cli, "cmd_nudge") and not hasattr(cli, "cmd_wait")
 
 
 def test_since_last_marker_is_per_view(built):

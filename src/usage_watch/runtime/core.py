@@ -354,7 +354,7 @@ def load_watermark(conn: sqlite3.Connection, collector: str) -> str | None:
 
 def default_lock_path(db_path: str | os.PathLike | None = None) -> Path:
     """`run.lock` in the state directory: the store's directory when a store
-    path is given, else the same file `watcher.acquire_lock` uses."""
+    path is given, else the usage-watch state directory."""
     if db_path is not None:
         return Path(db_path).parent / LOCK_FILE
     return state_dir() / LOCK_FILE

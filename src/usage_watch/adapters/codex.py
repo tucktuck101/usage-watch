@@ -7,7 +7,7 @@ the per-model form `You've hit your usage limit for <model>.`
 The busy and input-box layout has not been seen on a live pane. The adapter
 therefore reads `stalled` only when the limit message is the last thing above
 an empty `›` input line and nothing on screen says it is working. Anything
-else reads `unknown`, which is never nudged.
+else reads `unknown`, never guessed.
 """
 
 import re

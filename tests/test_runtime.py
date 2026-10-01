@@ -399,7 +399,7 @@ def test_liveness_running_stalled_none(tmp_path, calls):
     gone = liveness(**paths, now=clock.t + 5)
     assert gone.state == "none"
     assert gone.message() == (f"no collector running; data as of {at}; "
-                              "start one with: usage-watch run --no-nudge")
+                              "start one with: usage-watch run")
 
 
 def rt_pid():
@@ -440,7 +440,7 @@ def test_liveness_check_leaves_the_lock_free(tmp_path, calls):
 def test_liveness_without_a_store(tmp_path):
     live = liveness(db_path=tmp_path / "none.db", lock_path=tmp_path / "run.lock", now=T0)
     assert live.state == "none"
-    assert live.message() == "no collector running; no data yet; start one with: usage-watch run --no-nudge"
+    assert live.message() == "no collector running; no data yet; start one with: usage-watch run"
     assert not (tmp_path / "run.lock").exists()  # the reader creates nothing
 
 

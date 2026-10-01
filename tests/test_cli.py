@@ -1,6 +1,6 @@
 import re
 
-from usage_watch import cli, config
+from usage_watch import cli
 from usage_watch.errors import Problem
 
 
@@ -19,14 +19,6 @@ def test_primer_explains_and_agent_primer_is_the_contract(capsys):
 def test_problem_renders_what_expected_fix():
     text = Problem("x failed", fix="do y\nthen z", expected="x works").render()
     assert text == "usage-watch: x failed\n  expected: x works\n  fix: do y\n       then z"
-
-
-def test_config_render_round_trips(tmp_path):
-    path = tmp_path / "c.toml"
-    path.write_text(config.render({"omp": {"claude": "claude@team", "codex": "codex"}}))
-    cfg = config.load(path)
-    assert cfg.exists and cfg.accounts == {"omp": {"claude": "claude@team", "codex": "codex"}}
-    assert cfg.nudge == "continue" and cfg.interval == 300
 
 
 def test_bad_config_is_a_prompt(tmp_path, capsys, monkeypatch):

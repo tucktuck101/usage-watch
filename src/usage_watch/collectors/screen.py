@@ -1,7 +1,7 @@
 """The `screen` collector (D6): today's pane adapters as a pull source.
 
 Each pass scans the topology, reads every agent pane with its adapter
-(the same `screen.capture` and `Adapter.read` that `watcher.observe` uses),
+(`screen.capture`, then the pane's `Adapter.read`),
 and emits one `AgentStateSample` per pane. A stall occurrence (D8) also
 emits one `LimitEvent` when it begins.
 

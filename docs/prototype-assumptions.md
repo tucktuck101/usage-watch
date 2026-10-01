@@ -5,6 +5,11 @@ concept without blocking on decisions. **Each entry is an assumption the
 owner should confirm or overturn.** Entries are added as the work goes;
 none is a settled decision until the owner says so.
 
+> **Nudging was removed on 2026-10-01** (see the plan's Decisions log).
+> A1, A14, A15, A16, A17's nudging rationale, and A20's policy part are
+> deferred with it. A17, A19 and A20's screen-side retry time still affect
+> what is displayed. The rows stay as written.
+
 | # | Assumption | Why | Where it bites if wrong |
 |---|---|---|---|
 | A1 | D8's defaults are adopted as written: `min_remaining_pct = 5`, `stale_window_fallback = off`, `stale_window_max_age = 60 min`, `stale_window_min_remaining_pct = 50` (unused while the fallback is off) | Conservative. With the fallback off, the policy waits rather than guessing | The nudge policy (F5) may wait more often than you'd like |

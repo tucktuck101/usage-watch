@@ -16,7 +16,7 @@ import sqlite3
 import time
 
 from . import store
-from .policy import DISPLAY_AGE_MS, account_anchors
+from .capacity import DISPLAY_AGE_MS, account_anchors
 
 __all__ = ["Alerts"]
 
@@ -28,7 +28,7 @@ class Alerts:
         self.thresholds = sorted(thresholds)  # most severe first
         self.clock = clock
         if notify is None:
-            from .watcher import notify  # imported late: watcher pulls in the old pool code
+            from .notify import notify
         self.notify = notify
         self._fired: set[tuple] = set()
 

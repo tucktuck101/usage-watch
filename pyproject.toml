@@ -1,7 +1,7 @@
 [project]
 name = "usage-watch"
 version = "0.1.0"
-description = "Find AI coding agents stalled on a usage limit in tmux, and nudge them when the pool refills."
+description = "Terminal observability for AI coding agents in tmux: token usage, subscription capacity and agent state, from local data only."
 readme = "README.md"
 license = "0BSD"
 license-files = ["LICENSE"]

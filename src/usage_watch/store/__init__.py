@@ -43,7 +43,7 @@ def connect(path: str | os.PathLike | None = None, readonly: bool = False) -> sq
         if not path.exists():
             raise Problem(
                 f"no usage-watch store at {path}",
-                "start a collector with: usage-watch run --no-nudge",
+                "start a collector with: usage-watch run",
                 expected="a store written by the collector runtime",
             )
         conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, isolation_level=None)

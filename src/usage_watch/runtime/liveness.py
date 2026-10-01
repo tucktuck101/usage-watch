@@ -31,7 +31,7 @@ from .core import default_lock_path
 __all__ = ["STALE_S", "START_HINT", "Liveness", "liveness", "lock_held"]
 
 STALE_S = 30.0
-START_HINT = "usage-watch run --no-nudge"
+START_HINT = "usage-watch run"
 
 State = Literal["running", "stalled", "none"]
 

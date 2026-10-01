@@ -139,7 +139,7 @@ F1 or F2.
 | D5 | Privacy: no prompts, emails and account IDs hashed or dropped, redaction, what export may send | D1 |
 | D6 | Collector interface: poll or push, deduplication, a watermark per source, handling disagreement | D1, D3 |
 | D7 | Account registry and identity: the stable identity per provider, hashing, user labels, removed accounts, several token sources per account, confirming a token's identity whenever it changes, choosing between valid tokens, the poll budget per account | R7, D5 |
-| D8 | Nudge policy: the exact evidence a nudge needs (fresh stall, account certainty, the blocking window clear by a fresh anchor or a recovery signal, no other window known to block) | D1, D2, D6, D7 |
+| D8 | Nudge policy: the exact evidence a nudge needs (fresh stall, account certainty, the blocking window clear by a fresh anchor or a recovery signal, no other window known to block). **Deferred 2026-10-01**: nudging is removed from the code; D8 stays as the specification for its return | D1, D2, D6, D7 |
 
 ### Phase 3: foundation
 
@@ -149,7 +149,7 @@ F1 or F2.
 | F2 | The collector runtime: scheduling, watermarks, deduplication, writing records. **Done 2026-10-01** (`runtime/`: core, liveness, reconcile, attribution, accounts). Not yet wired into commands (F3–F5); the per-source field allowlist check arrives with each collector (phase 4) |
 | F3 | Existing logic becomes collectors: screen states (inferred), tmux, git and workmux enrichment. **Done 2026-10-01**: `collectors/screen.py` (state samples, one limit event per stall occurrence) and `collectors/topology.py` (checkouts). Roles, lanes and panes on sessions wait for the session joins in C4 |
 | F4 | `status` and `dashboard` read from the store. **Done 2026-10-01** (prototype): `status`, `doctor`, `dashboard`, `usage` read the store with liveness; `run` hosts the runtime |
-| F5 | The watcher reads its nudge decisions from the store, and its behaviour conforms to D8, confirmed by tests of D8's conditions. **Done 2026-10-01** (prototype): `policy.py` implements D8, plus the harness retry-after rule (A20) |
+| F5 | The watcher reads its nudge decisions from the store, and its behaviour conforms to D8, confirmed by tests of D8's conditions. ~~Done 2026-10-01 (prototype): `policy.py` implements D8, plus the harness retry-after rule (A20)~~ **Removed 2026-10-01**: deferred with nudging |
 
 ### Phase 4: collectors
 
@@ -236,6 +236,7 @@ insufficient, given what it means for security and maintenance.
 | 2026-09-30 | Capacity is anchors plus estimates: real readings from the harnesses, with the usage stream filling the gaps between them (D1, V4) |
 | 2026-09-30 | Several subscriptions per provider are supported: accounts are the unit, discovered read-only from every place a login lives, with a poll budget per account (R7, D7, C1, C5) |
 | 2026-10-01 | Integration resolutions for the second review: confidence order `authoritative` > `observed` > `inferred`; subject's time per subject kind; `disagreement` across all supporting observations; `stream_key` fixed at first store (trace-ID hash for OTLP without a session); `stream_key` and surrogate IDs for capacity samples and limit events, no key includes `account`; Codex `billing_route` as session-level attribution evidence from OTel `auth_mode`; observation keys (Codex rollout timestamp + `total_tokens`, omp entry `id` confirmed before C2, Codex OTLP `turn.id`, omp OTLP `gen_ai.response.id`); `event_observations.field` NOT NULL; `link_state`; effective attributions stored only for subjects with own evidence; identical `wait` = `(pane, error_key, reason code)`; `runtime` keeps 20 past runs; older schema means wait; `live` evidence bounds; D2 coherence rules; `verified_by` on `co_reported` merges; config fallback as `config`/`inferred` evidence; omp usage-cache account evidence `observed`; 8-day look-back for applicable windows; `weekly:<model>` matching by family word; hash namespaces; screen-adapter outputs from code; limit-event and history `stream_key`/`source_key` rules; the config fallback is `live` evidence; failed-join notes live on `effective_attributions` |
+| 2026-10-01 | Automatic nudging removed from the code for now. usage-watch is a terminal observability tool until the owner revisits nudging. Design D8 stays as the specification for that return. Reason: an external review found the action path not yet safe for unattended use, and the owner chose to focus on observability |
 
 ## Open questions
 
