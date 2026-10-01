@@ -4,9 +4,12 @@ import argparse
 import json
 import os
 import re
+import shlex
+import shutil
 import sys
 import time
 from importlib import resources
+from pathlib import Path
 
 from . import __version__, config, screen, sh, watcher
 from .adapters import ADAPTERS
@@ -134,6 +137,11 @@ def cmd_doctor(a) -> int:
 # init -----------------------------------------------------------------------
 
 def cmd_init(a) -> int:
+    if a.claude_statusline:
+        return cmd_init_claude_statusline(a)
+    if a.undo or a.yes:
+        raise Problem("--undo and --yes apply only to `init --claude-statusline`",
+                      fix="rerun as `usage-watch init --claude-statusline --undo` (or --yes)")
     cfg = config.load()
     if cfg.exists and not a.force:
         raise Problem(f"a config file already exists at {cfg.path}",
@@ -173,6 +181,121 @@ def cmd_init(a) -> int:
     cfg.path.write_text(config.render(accounts))
     print(f"\nwrote {cfg.path}\nnext: `usage-watch doctor` to check what it sees, then `usage-watch run` in a tmux window")
     return 0
+
+
+# init --claude-statusline ---------------------------------------------------
+
+TAP = "usage-watch statusline-tap --"
+_PLAIN = re.compile(r"[\w@%+=:,./~ -]+")
+
+
+def claude_settings_path() -> Path:
+    return Path.home() / ".claude" / "settings.json"
+
+
+def tap_prefix() -> str:
+    """The tap, by absolute path where one can be found: Claude Code runs the
+    status line with its own PATH, which may not include usage-watch's."""
+    found = shutil.which("usage-watch")
+    return f"{shlex.quote(found)} statusline-tap --" if found else TAP
+
+
+def wrap_statusline_command(existing: str | None, prefix: str | None = None) -> str:
+    """The tap in front of the user's command. A command of plain words is
+    kept verbatim; anything with shell syntax is quoted into one argument,
+    which the tap runs with /bin/sh -c, so it means what it meant before."""
+    prefix = prefix or TAP
+    if not existing or not existing.strip():
+        return prefix
+    if _PLAIN.fullmatch(existing.strip()):
+        return f"{prefix} {existing.strip()}"
+    return f"{prefix} {shlex.quote(existing)}"
+
+
+def _write_atomic(path: Path, data: bytes, like: Path | None = None) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_bytes(data)
+        if like is not None and like.exists():
+            os.chmod(tmp, like.stat().st_mode & 0o7777)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def cmd_init_claude_statusline(a) -> int:
+    settings = claude_settings_path()
+    backup = settings.with_name(settings.name + ".usage-watch.bak")
+    if a.undo:
+        if not backup.exists():
+            raise Problem(f"no backup at {backup}; nothing to undo",
+                          expected="a backup written by `usage-watch init --claude-statusline`",
+                          fix=f"check the statusLine entry in {settings} by hand")
+        original = backup.read_bytes()
+        if original:
+            _write_atomic(settings, original, like=settings)
+        else:  # there was no settings.json before
+            settings.unlink(missing_ok=True)
+        backup.unlink()
+        print(f"restored {settings} from {backup}")
+        return 0
+
+    original = settings.read_bytes() if settings.exists() else b""
+    try:
+        data = json.loads(original) if original.strip() else {}
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise Problem(f"{settings} is not a JSON object",
+                      expected="Claude Code's settings.json",
+                      fix=f"fix {settings} by hand, then rerun")
+    before = data.get("statusLine")
+    existing = before.get("command") if isinstance(before, dict) else None
+    if isinstance(existing, str) and "statusline-tap" in existing:
+        raise Problem("the Claude status line already runs through usage-watch statusline-tap",
+                      expected="a statusLine command that is not wrapped yet",
+                      fix="nothing to do; `usage-watch init --claude-statusline --undo` removes it")
+    if backup.exists():
+        raise Problem(f"a backup already exists at {backup}",
+                      expected="no earlier backup, so it is never overwritten",
+                      fix=f"run `usage-watch init --claude-statusline --undo`, or move {backup} aside")
+    after = dict(before) if isinstance(before, dict) else {}
+    after["type"] = "command"
+    after["command"] = wrap_statusline_command(existing if isinstance(existing, str) else None, tap_prefix())
+
+    print(f"{settings}: statusLine")
+    print(f"  before: {json.dumps(before) if before is not None else '(none)'}")
+    print(f"  after:  {json.dumps(after)}")
+    if not a.yes:
+        if not sys.stdin.isatty():
+            raise Problem("no terminal to confirm the change",
+                          fix="rerun with --yes to apply it as shown")
+        if input("Apply this change? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("not changed")
+            return 1
+    data["statusLine"] = after
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomic(backup, original, like=settings if settings.exists() else None)
+    _write_atomic(settings, (json.dumps(data, indent=2) + "\n").encode(), like=settings)
+    print(f"applied; the original is kept at {backup}\nundo: usage-watch init --claude-statusline --undo")
+    return 0
+
+
+# statusline-tap ---------------------------------------------------------------
+
+def cmd_statusline_tap(argv: list[str]) -> int:
+    from .collectors import statusline
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    try:
+        stdin = b"" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.buffer.read()
+    except Exception:
+        stdin = b""
+    code, stdout = statusline.tap(argv, stdin)
+    sys.stdout.flush()
+    sys.stdout.buffer.write(stdout)
+    sys.stdout.buffer.flush()
+    return code
 
 
 # wait / nudge / run ---------------------------------------------------------
@@ -264,10 +387,22 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--capture", metavar="PANE", help="print a pane's screen, with personal details removed")
     s.set_defaults(fn=cmd_doctor)
 
-    s = sub.add_parser("init", help="write a config file, choosing accounts where there are several")
+    s = sub.add_parser("init", help="write a config file, choosing accounts where there are several; "
+                                    "--claude-statusline installs the status line tap")
     s.add_argument("--account", action="append", metavar="HARNESS.FAMILY=PROVIDER")
     s.add_argument("--force", action="store_true", help="replace an existing config file")
+    s.add_argument("--claude-statusline", action="store_true",
+                   help="instead: wrap Claude Code's statusLine command in ~/.claude/settings.json with "
+                        "`usage-watch statusline-tap --`, after showing the change")
+    s.add_argument("--undo", action="store_true", help="with --claude-statusline: restore the backup")
+    s.add_argument("--yes", action="store_true", help="with --claude-statusline: apply without asking")
     s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("statusline-tap", help="run as Claude's status line: keep its rate_limits, "
+                                              "then run your own command with the same input",
+                       usage="usage-watch statusline-tap -- [YOUR STATUS LINE COMMAND ...]")
+    s.add_argument("command", nargs=argparse.REMAINDER, help="your status line command, after --")
+    s.set_defaults(fn=None)
 
     s = sub.add_parser("wait", help="block until a pool has capacity")
     s.add_argument("--provider", help="provider id, as `usage-watch doctor` lists it")
@@ -297,6 +432,12 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # Everything after `statusline-tap` is the user's command, passed through
+    # untouched; argparse's handling of `--` and option-like words differs by
+    # Python version, so it never sees them. Only a bare -h/--help reaches it.
+    if argv and argv[0] == "statusline-tap" and argv[1:] not in (["-h"], ["--help"]):
+        return cmd_statusline_tap(argv[1:])
     a = parser().parse_args(argv)
     try:
         return a.fn(a)

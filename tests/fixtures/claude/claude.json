@@ -1,0 +1,74 @@
+{
+ "numStartups": 3,
+ "userID": "SYNTHETIC-USER-ID",
+ "oauthAccount": {
+  "accountUuid": "aaaaaaaa-0000-4000-8000-000000000001",
+  "organizationUuid": "bbbbbbbb-0000-4000-8000-000000000002",
+  "emailAddress": "someone@example.invalid"
+ },
+ "cachedUsageUtilization": {
+  "fetchedAtMs": 1790000000000,
+  "accountUuid": "aaaaaaaa-0000-4000-8000-000000000001",
+  "utilization": {
+   "five_hour": {
+    "utilization": 42,
+    "resets_at": "2026-09-22T18:00:00.123456+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+   },
+   "seven_day": {
+    "utilization": 7,
+    "resets_at": "2026-09-27T00:00:00.000000+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+   },
+   "seven_day_oauth_apps": {
+    "utilization": 1,
+    "resets_at": null,
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+   },
+   "seven_day_opus": null,
+   "seven_day_sonnet": {
+    "utilization": 12.5,
+    "resets_at": null,
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+   },
+   "nimbus_quill": {
+    "utilization": 3,
+    "resets_at": null,
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+   },
+   "extra_usage": {
+    "is_enabled": false,
+    "monthly_limit": null,
+    "used_credits": 0,
+    "utilization": null,
+    "currency": "XXX"
+   },
+   "limits": [
+    {
+     "kind": "session",
+     "group": "session",
+     "percent": 42,
+     "severity": "normal",
+     "resets_at": "2026-09-22T18:00:00.123456+00:00",
+     "scope": null,
+     "is_active": true
+    }
+   ]
+  }
+ }
+}
